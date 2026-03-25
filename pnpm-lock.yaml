@@ -1,0 +1,55 @@
+lockfileVersion: '9.0'
+
+settings:
+  autoInstallPeers: true
+  excludeLinksFromLockfile: false
+
+catalogs:
+  default:
+    '@codemod.com/jssg-types':
+      specifier: 1.5.1
+      version: 1.5.1
+    '@jssg/utils':
+      specifier: 0.0.2
+      version: 0.0.2
+    typescript:
+      specifier: 6.0.2
+      version: 6.0.2
+
+importers:
+
+  .: {}
+
+  codemods/debarrel:
+    dependencies:
+      '@jssg/utils':
+        specifier: 'catalog:'
+        version: 0.0.2
+    devDependencies:
+      '@codemod.com/jssg-types':
+        specifier: 'catalog:'
+        version: 1.5.1
+      typescript:
+        specifier: 'catalog:'
+        version: 6.0.2
+
+packages:
+
+  '@codemod.com/jssg-types@1.5.1':
+    resolution: {integrity: sha512-pCngSoz7hpNiMMkoVi+b4uqy7cA2XuJqEaOx52KYN/25bOdzJ7IqU9DEMukOKnWyFt9iy3UBinayit1P1+9wXA==}
+
+  '@jssg/utils@0.0.2':
+    resolution: {integrity: sha512-eCQv5Xs9yfI6OKq2PQ8SyKsxPhdiaJY/XAFJmsZiVbsK5DIBBmGBA95CsyD4JFWXDKkNv6Q7ER/Kbp6/uWzB2w==}
+
+  typescript@6.0.2:
+    resolution: {integrity: sha512-bGdAIrZ0wiGDo5l8c++HWtbaNCWTS4UTv7RaTH/ThVIgjkveJt83m74bBHMJkuCbslY8ixgLBVZJIOiQlQTjfQ==}
+    engines: {node: '>=14.17'}
+    hasBin: true
+
+snapshots:
+
+  '@codemod.com/jssg-types@1.5.1': {}
+
+  '@jssg/utils@0.0.2': {}
+
+  typescript@6.0.2: {}

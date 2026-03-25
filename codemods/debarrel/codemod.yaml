@@ -1,0 +1,20 @@
+schema_version: "1.0"
+
+name: "debarrel"
+version: "0.1.0"
+description: "Debarrel JS/TS codebases. Removing barrel files and replacing import statements."
+author: "Mo Mohebifar <mo@codemod.com>"
+license: "MIT"
+workflow: "workflow.yaml"
+
+
+targets:
+  languages: ["typescript"]
+
+keywords: ["transformation", "migration"]
+
+registry:
+  access: "public"
+  visibility: "public"
+
+capabilities: []

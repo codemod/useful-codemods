@@ -1,0 +1,9 @@
+{
+  "name": "useful-codemods",
+  "private": true,
+  "description": "Useful codemods made by Codemod.",
+  "scripts": {
+    "test": "pnpm -r test",
+    "check-types": "pnpm -r check-types"
+  }
+}
