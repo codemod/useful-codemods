@@ -1,6 +1,11 @@
 ---
 name: "debarrel"
 description: "Prevent creation of barrel files in JS/TS codebases. Provides mass migration via npx codemod debarrel."
+allowed-tools:
+  - Bash(codemod debarrel)
+  - Bash(npx codemod debarrel)
+codemod-compatibility: mcs-v1
+codemod-skill-version: 1.0.0
 ---
 
 # No Barrel Files Policy
