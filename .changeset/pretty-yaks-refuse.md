@@ -1,5 +1,0 @@
----
-"debarrel": patch
----
-
-Initial release
