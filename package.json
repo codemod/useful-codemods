@@ -4,6 +4,11 @@
   "description": "Useful codemods made by Codemod.",
   "scripts": {
     "test": "pnpm -r test",
-    "check-types": "pnpm -r check-types"
+    "check-types": "pnpm -r check-types",
+    "changeset": "changeset",
+    "version-packages": "changeset version && bash scripts/sync-codemod-versions.sh"
+  },
+  "devDependencies": {
+    "@changesets/cli": "^2.30.0"
   }
 }

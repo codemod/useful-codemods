@@ -1,8 +1,11 @@
-name: Publish Codemod
+name: Publish Codemod (Manual)
 on:
-  push:
-    tags:
-      - "*@v*"
+  workflow_dispatch:
+    inputs:
+      codemod_name:
+        description: "Codemod name (directory name under codemods/)"
+        required: true
+        type: string
 
 permissions:
   id-token: write
@@ -14,14 +17,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Extract codemod name from tag
-        id: extract
-        run: |
-          TAG="${GITHUB_REF#refs/tags/}"
-          CODEMOD_NAME="${TAG%@v*}"
-          echo "codemod_name=$CODEMOD_NAME" >> $GITHUB_OUTPUT
-
       - name: Publish codemod
         uses: codemod/publish-action@v1
         with:
-          path: codemods/${{ steps.extract.outputs.codemod_name }}
+          path: codemods/${{ inputs.codemod_name }}

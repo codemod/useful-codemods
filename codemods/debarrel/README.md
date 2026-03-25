@@ -1,44 +1,48 @@
 # debarrel
 
-Debarrel JS/TS codebases. Removing barrel files and replacing import statements.
+Removes barrel files (index re-export files) from JavaScript and TypeScript codebases, rewriting imports to point directly at the source modules.
 
-## Installation
+## Before / After
 
-```bash
-# Install from registry
-codemod run debarrel
+```ts
+// Before — importing through a barrel
+import { Button } from "./components";
 
-# Or run locally
-codemod run -w workflow.yaml
+// After — importing directly from the source
+import { Button } from "./components/Button";
 ```
+
+Pure barrel files (files that only re-export) are renamed to `index.barrel.bak.ts` for review.
+
+## What it handles
+
+- Named re-exports (`export { X } from './X'`)
+- Aliased re-exports (`export { X as Y } from './X'`)
+- Default-as-named re-exports (`export { default as X } from './X'`)
+- Namespace re-exports (`export * as X from './X'`)
+- Import-then-reexport patterns
+- Mixed barrel files that contain their own declarations (only the re-exported imports are rewritten; the barrel is kept)
 
 ## Usage
 
-This codemod transforms typescript code by:
+```bash
+# Run from the registry
+codemod run debarrel
 
-- Converting `var` declarations to `const`/`let`
-- Removing debug statements
-- Modernizing syntax patterns
+# Run locally during development
+codemod run -w workflow.yaml
+```
 
 ## Development
 
 ```bash
-# Test the transformation
-npm test
+# Run tests
+pnpm test
 
-# Validate the workflow
-codemod validate -w workflow.yaml
-
-# Publish to registry
-codemod login
-codemod publish
+# Type-check
+pnpm check-types
 ```
 
 ## License
 
-MIT 
-## Skill Installation
-
-```bash
-npx codemod@latest debarrel
-```
+MIT
