@@ -1,5 +1,11 @@
 # debarrel
 
+## 0.1.7
+
+### Patch Changes
+
+- a058a8a: handle barrel import paths ending with '/index' to ensure correct path resolution
+
 ## 0.1.6
 
 ### Patch Changes
