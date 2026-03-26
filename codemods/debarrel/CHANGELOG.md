@@ -1,5 +1,11 @@
 # debarrel
 
+## 0.1.4
+
+### Patch Changes
+
+- d1b45c9: remove computeRelativeImportPath function and simplify resolveSpecifier logic
+
 ## 0.1.3
 
 ### Patch Changes
