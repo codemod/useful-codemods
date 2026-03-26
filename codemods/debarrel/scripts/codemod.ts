@@ -161,25 +161,12 @@ interface SpecRewrite {
 }
 
 /**
- * Compute relative path from one file to another, stripping the extension
- * and ensuring a leading "./" prefix.
- */
-function computeRelativeImportPath(fromFile: string, toFile: string): string {
-  // @ts-expect-error -- JSSG types missing relative
-  let rel = path.relative(path.dirname(fromFile), toFile);
-  rel = rel.replace(/\.(ts|tsx|js|jsx)$/, "");
-  if (!rel.startsWith(".")) rel = "./" + rel;
-  return rel;
-}
-
-/**
  * Given a definition result for an import specifier, resolve it to
  * a direct import path bypassing the barrel.
  */
 function resolveSpecifier(
   localBinding: SgNode<Language>,
   importPath: string,
-  filename: string,
   def: { kind: string; root: { filename(): string }; node: SgNode<Language> },
 ): SpecRewrite | null {
   if (def.kind !== "external") return null;
@@ -223,38 +210,12 @@ function resolveSpecifier(
     };
   }
 
-  // Semantic analyzer resolved all the way through to the actual source file.
-  // Compute a relative path from the source file to the barrel's directory,
-  // then join with the original import prefix to preserve aliases/packages.
-  const sourceFile = def.root.filename();
-  if (isLocalRelativePath(importPath)) {
-    const directPath = computeRelativeImportPath(filename, sourceFile);
-    if (directPath === importPath) return null;
-    return {
-      consumerName: localBinding.text(),
-      newImportPath: directPath,
-      localName: localBinding.text(),
-      importType: "named",
-    };
-  }
-
-  // For non-relative imports (aliases, workspace packages), compute the
-  // relative path from the barrel directory to the source and join it with
-  // the original import prefix so the alias is preserved.
-  const barrelDir = path.dirname(sourceFile);
-  const sourceRel = computeRelativeImportPath(
-    path.join(barrelDir, "index.ts"),
-    sourceFile,
-  );
-  if (sourceRel === ".") return null;
-  const newPath = joinImportPaths(importPath, sourceRel);
-  if (newPath === importPath) return null;
-  return {
-    consumerName: localBinding.text(),
-    newImportPath: newPath,
-    localName: localBinding.text(),
-    importType: "named",
-  };
+  // Semantic analyzer resolved all the way through to the actual source file
+  // (not a barrel). Only rewrite if the import actually went through a barrel
+  // that we can bypass. If the resolved file is already the direct target of
+  // the import (e.g. @acme/api/models/utils/ratelimiter → ratelimiter.ts),
+  // the import is already correct — don't rewrite.
+  return null;
 }
 
 function buildImportText(
@@ -368,7 +329,7 @@ const transform: Transform<Language> = async (root) => {
         if (!localBinding) continue;
         const def = localBinding.definition();
         if (!def) continue;
-        const rw = resolveSpecifier(localBinding, importPath, filename, def);
+        const rw = resolveSpecifier(localBinding, importPath, def);
         if (rw) rewrites.push(rw);
       }
     }
@@ -384,7 +345,7 @@ const transform: Transform<Language> = async (root) => {
       totalSpecifiers += 1;
       const def = defaultIdent.definition();
       if (def) {
-        const rw = resolveSpecifier(defaultIdent, importPath, filename, def);
+        const rw = resolveSpecifier(defaultIdent, importPath, def);
         if (rw) rewrites.push(rw);
       }
     }
