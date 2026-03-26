@@ -22,7 +22,17 @@ function joinImportPaths(
   // produces "a/b/c" instead of "../../a/b/c").
   // The barrel import path points to a directory (containing index.ts), so we
   // concatenate it with the relative source path and normalize.
-  const segments = (barrelImportPath + "/" + sourceFromBarrel).split("/");
+  // If the import explicitly ends with "/index", strip it — it's a file
+  // reference (e.g. "../index" → "../"), not a directory called "index/".
+  let barrelDir = barrelImportPath;
+  if (
+    /\/index$/.test(barrelDir) ||
+    barrelDir === "index" ||
+    barrelDir === "./index"
+  ) {
+    barrelDir = barrelDir.replace(/\/?index$/, "") || ".";
+  }
+  const segments = (barrelDir + "/" + sourceFromBarrel).split("/");
   const resolved: string[] = [];
   for (const seg of segments) {
     if (seg === "." || seg === "") continue;
