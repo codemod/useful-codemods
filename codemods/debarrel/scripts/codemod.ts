@@ -4,6 +4,7 @@ import type TypeScript from "codemod:ast-grep/langs/typescript";
 import type JavaScript from "codemod:ast-grep/langs/javascript";
 import { addImport, removeImport } from "@jssg/utils/javascript/imports";
 import path from "path";
+import fs from "fs";
 
 type Language = TSX | TypeScript | JavaScript;
 
@@ -17,26 +18,46 @@ function joinImportPaths(
   sourceFromBarrel: string,
 ): string {
   let result = path.join(barrelImportPath, sourceFromBarrel);
-  if (!result.startsWith(".")) {
+  if (isLocalRelativePath(barrelImportPath) && !result.startsWith(".")) {
     result = "./" + result;
   }
   return result;
 }
 
 function isLocalRelativePath(source: string): boolean {
-  return source.startsWith("./") || source.startsWith("../");
+  return (
+    source === "." ||
+    source === ".." ||
+    source.startsWith("./") ||
+    source.startsWith("../")
+  );
 }
 
 function isBarrelFile(filename: string): boolean {
   return /^index\.(ts|tsx|js|jsx)$/.test(path.basename(filename));
 }
 
-function computeRelativeImportPath(fromFile: string, toFile: string): string {
-  // @ts-expect-error -- JSSG types missing relative
-  let rel = path.relative(path.dirname(fromFile), toFile);
-  rel = rel.replace(/\.(ts|tsx|js|jsx)$/, "");
-  if (!rel.startsWith(".")) rel = "./" + rel;
-  return rel;
+function isInsideNodeModules(filename: string): boolean {
+  return filename.includes("/node_modules/") || filename.includes("\\node_modules\\");
+}
+
+function fileExists(filePath: string): boolean {
+  try {
+    fs.accessSync(filePath);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function hasPackageJson(filename: string): boolean {
+  let dir = path.dirname(filename);
+  const root = path.parse(dir).root || "/";
+  while (dir !== root) {
+    if (fileExists(path.join(dir, "package.json"))) return true;
+    dir = path.dirname(dir);
+  }
+  return false;
 }
 
 interface BarrelExportInfo {
@@ -140,6 +161,18 @@ interface SpecRewrite {
 }
 
 /**
+ * Compute relative path from one file to another, stripping the extension
+ * and ensuring a leading "./" prefix.
+ */
+function computeRelativeImportPath(fromFile: string, toFile: string): string {
+  // @ts-expect-error -- JSSG types missing relative
+  let rel = path.relative(path.dirname(fromFile), toFile);
+  rel = rel.replace(/\.(ts|tsx|js|jsx)$/, "");
+  if (!rel.startsWith(".")) rel = "./" + rel;
+  return rel;
+}
+
+/**
  * Given a definition result for an import specifier, resolve it to
  * a direct import path bypassing the barrel.
  */
@@ -150,6 +183,11 @@ function resolveSpecifier(
   def: { kind: string; root: { filename(): string }; node: SgNode<Language> },
 ): SpecRewrite | null {
   if (def.kind !== "external") return null;
+
+  // Never rewrite imports that resolve into node_modules — those are
+  // third-party or published workspace packages with potentially restricted
+  // package.json "exports" that would break if we change the import subpath.
+  if (isInsideNodeModules(def.root.filename())) return null;
 
   if (isBarrelFile(def.root.filename())) {
     // Definition landed on an export_statement in the barrel
@@ -185,12 +223,35 @@ function resolveSpecifier(
     };
   }
 
-  // Semantic analyzer resolved all the way through to the actual source file
-  const directPath = computeRelativeImportPath(filename, def.root.filename());
-  if (directPath === importPath) return null;
+  // Semantic analyzer resolved all the way through to the actual source file.
+  // Compute a relative path from the source file to the barrel's directory,
+  // then join with the original import prefix to preserve aliases/packages.
+  const sourceFile = def.root.filename();
+  if (isLocalRelativePath(importPath)) {
+    const directPath = computeRelativeImportPath(filename, sourceFile);
+    if (directPath === importPath) return null;
+    return {
+      consumerName: localBinding.text(),
+      newImportPath: directPath,
+      localName: localBinding.text(),
+      importType: "named",
+    };
+  }
+
+  // For non-relative imports (aliases, workspace packages), compute the
+  // relative path from the barrel directory to the source and join it with
+  // the original import prefix so the alias is preserved.
+  const barrelDir = path.dirname(sourceFile);
+  const sourceRel = computeRelativeImportPath(
+    path.join(barrelDir, "index.ts"),
+    sourceFile,
+  );
+  if (sourceRel === ".") return null;
+  const newPath = joinImportPaths(importPath, sourceRel);
+  if (newPath === importPath) return null;
   return {
     consumerName: localBinding.text(),
-    newImportPath: directPath,
+    newImportPath: newPath,
     localName: localBinding.text(),
     importType: "named",
   };
@@ -353,8 +414,14 @@ const transform: Transform<Language> = async (root) => {
     }
   }
 
-  // Barrel rename
-  if (isBarrelFile(filename)) {
+  // Barrel rename — skip files inside node_modules or inside a package
+  // (renaming a package entry point would break consumers importing via
+  // the package name).
+  if (
+    isBarrelFile(filename) &&
+    !isInsideNodeModules(filename) &&
+    !hasPackageJson(filename)
+  ) {
     const { pure, hasWildcards } = isPureBarrel(rootNode);
     if (pure && !hasWildcards) {
       root.rename(`index.barrel.bak${path.extname(filename)}`);

@@ -4,7 +4,7 @@
   "description": "Debarrel JS/TS codebases. Removing barrel files and replacing import statements.",
   "type": "module",
   "scripts": {
-    "test": "pnpm dlx codemod@latest jssg test -l typescript ./scripts/codemod.ts --semantic-workspace --strictness loose",
+    "test": "pnpm dlx codemod@latest jssg test -l typescript ./scripts/codemod.ts --semantic-workspace --strictness loose --allow-fs",
     "check-types": "tsc --noEmit"
   },
   "dependencies": {

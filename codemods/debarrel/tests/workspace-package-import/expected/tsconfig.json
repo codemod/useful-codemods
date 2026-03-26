@@ -1,0 +1,12 @@
+{
+  "compilerOptions": {
+    "target": "ES2020",
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "baseUrl": ".",
+    "paths": {
+      "@acme/package-b/*": ["./packages/package-b/src/*"]
+    }
+  },
+  "include": ["src", "packages"]
+}
