@@ -1,5 +1,11 @@
 # debarrel
 
+## 0.1.6
+
+### Patch Changes
+
+- 599cb9e: resolve path joining issue in joinImportPaths function and update workflow step formatting
+
 ## 0.1.5
 
 ### Patch Changes
