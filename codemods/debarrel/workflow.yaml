@@ -7,17 +7,12 @@ nodes:
     name: Apply AST Transformations
     type: automatic
     steps:
-      - name: "Debarrel: rewrite imports and clean up barrels"
+      - id: debarrel-js-ast-grep
+        name: "Debarrel: rewrite imports and clean up barrels"
         js-ast-grep:
           js_file: scripts/codemod.ts
           language: "typescript"
           semantic_analysis: workspace
-
-
-  - id: install-package-skill
-    name: Install Package Skill
-    type: automatic
-    steps:
       - id: install-package-skill
         name: Install package skill
         install-skill:

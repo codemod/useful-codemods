@@ -17,7 +17,26 @@ function joinImportPaths(
   barrelImportPath: string,
   sourceFromBarrel: string,
 ): string {
-  let result = path.join(barrelImportPath, sourceFromBarrel);
+  // Cannot use path.join here because the JSSG runtime's path.join has a bug
+  // where leading "../" segments are dropped (e.g. path.join("../../a/b", "./c")
+  // produces "a/b/c" instead of "../../a/b/c").
+  // The barrel import path points to a directory (containing index.ts), so we
+  // concatenate it with the relative source path and normalize.
+  const segments = (barrelImportPath + "/" + sourceFromBarrel).split("/");
+  const resolved: string[] = [];
+  for (const seg of segments) {
+    if (seg === "." || seg === "") continue;
+    if (
+      seg === ".." &&
+      resolved.length > 0 &&
+      resolved[resolved.length - 1] !== ".."
+    ) {
+      resolved.pop();
+    } else {
+      resolved.push(seg);
+    }
+  }
+  let result = resolved.join("/");
   if (isLocalRelativePath(barrelImportPath) && !result.startsWith(".")) {
     result = "./" + result;
   }
@@ -38,7 +57,9 @@ function isBarrelFile(filename: string): boolean {
 }
 
 function isInsideNodeModules(filename: string): boolean {
-  return filename.includes("/node_modules/") || filename.includes("\\node_modules\\");
+  return (
+    filename.includes("/node_modules/") || filename.includes("\\node_modules\\")
+  );
 }
 
 function fileExists(filePath: string): boolean {
