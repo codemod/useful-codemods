@@ -176,6 +176,14 @@ function resolveSpecifier(
   // package.json "exports" that would break if we change the import subpath.
   if (isInsideNodeModules(def.root.filename())) return null;
 
+  // For non-relative imports (package names, aliases), skip if the resolved
+  // file lives inside a package (has a package.json ancestor). The package's
+  // "exports" field controls valid subpaths — rewriting the import could
+  // produce a path that isn't exported (e.g. @acme/validators → @acme/validators/foo).
+  if (!isLocalRelativePath(importPath) && hasPackageJson(def.root.filename())) {
+    return null;
+  }
+
   if (isBarrelFile(def.root.filename())) {
     // Definition landed on an export_statement in the barrel
     if (def.node.is("export_statement")) {
