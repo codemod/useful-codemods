@@ -1,5 +1,11 @@
 # debarrel
 
+## 0.1.8
+
+### Patch Changes
+
+- 2c02f64: Add fs capability
+
 ## 0.1.7
 
 ### Patch Changes

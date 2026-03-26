@@ -1,7 +1,7 @@
 schema_version: "1.0"
 
 name: "debarrel"
-version: "0.1.7"
+version: "0.1.8"
 description: "Debarrel JS/TS codebases. Removing barrel files and replacing import statements."
 author: "Mo Mohebifar <mo@codemod.com>"
 license: "MIT"
