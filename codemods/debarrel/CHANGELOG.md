@@ -1,5 +1,11 @@
 # debarrel
 
+## 0.1.5
+
+### Patch Changes
+
+- efa51f3: prevent rewriting non-relative imports from packages with package.json
+
 ## 0.1.4
 
 ### Patch Changes
