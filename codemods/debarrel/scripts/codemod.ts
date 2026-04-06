@@ -1,8 +1,9 @@
-import type { Transform, Edit, SgNode } from "codemod:ast-grep";
+import type { Transform, Edit, SgNode, GetSelector } from "codemod:ast-grep";
 import type TSX from "codemod:ast-grep/langs/tsx";
 import type TypeScript from "codemod:ast-grep/langs/typescript";
 import type JavaScript from "codemod:ast-grep/langs/javascript";
 import { addImport, removeImport } from "@jssg/utils/javascript/imports";
+import { fitsInShard } from "codemodctl/sharding";
 import path from "path";
 import fs from "fs";
 
@@ -70,6 +71,20 @@ function isInsideNodeModules(filename: string): boolean {
   return (
     filename.includes("/node_modules/") || filename.includes("\\node_modules\\")
   );
+}
+
+function getRelativePath(from: string, to: string): string {
+  const fromParts = from.split(/[/\\]/).filter(Boolean);
+  const toParts = to.split(/[/\\]/).filter(Boolean);
+  let i = 0;
+  while (i < fromParts.length && i < toParts.length && fromParts[i] === toParts[i]) {
+    i++;
+  }
+  const upCount = fromParts.length - i;
+  const downParts = toParts.slice(i);
+  const upParts = Array(upCount).fill("..");
+  const relativeParts = [...upParts, ...downParts];
+  return relativeParts.length === 0 ? "." : relativeParts.join("/");
 }
 
 function fileExists(filePath: string): boolean {
@@ -331,9 +346,18 @@ function addImportsFromRewrites(
   }
 }
 
-const transform: Transform<Language> = async (root) => {
+const transform: Transform<Language> = async (root, options) => {
   const rootNode = root.root();
   const filename = root.filename();
+  const projectRoot = process.cwd();
+  const relativeFilename = getRelativePath(projectRoot, filename);
+
+  if (options.matrixValues?.shard && options.matrixValues._meta_files) {
+    const fits = fitsInShard(relativeFilename, options.matrixValues as {_meta_files: string[] });
+    if (!fits) {
+      return null;
+    }
+  }
   const edits: Edit[] = [];
 
   for (const importStmt of rootNode.findAll({
@@ -430,6 +454,10 @@ const transform: Transform<Language> = async (root) => {
 
   if (edits.length === 0) return null;
   return rootNode.commitEdits(edits);
+};
+
+export const getSelector: GetSelector<Language> = () => {
+  return {rule: { kind: "import_statement" } };
 };
 
 export default transform;

@@ -8,7 +8,8 @@
     "check-types": "tsc --noEmit"
   },
   "dependencies": {
-    "@jssg/utils": "catalog:"
+    "@jssg/utils": "catalog:",
+    "codemodctl": "0.1.17"
   },
   "devDependencies": {
     "@codemod.com/jssg-types": "catalog:",
