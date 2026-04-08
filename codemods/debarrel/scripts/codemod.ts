@@ -331,7 +331,7 @@ function addImportsFromRewrites(
   }
 }
 
-const transform: Transform<Language> = async (root, options) => {
+const transform: Transform<Language> = async (root) => {
   const rootNode = root.root();
   const filename = root.filename();
   const edits: Edit[] = [];
@@ -433,7 +433,11 @@ const transform: Transform<Language> = async (root, options) => {
 };
 
 export const getSelector: GetSelector<Language> = () => {
-  return {rule: { kind: "import_statement" } };
+  return {
+    rule: {
+      any: [{ kind: "import_statement" }, { kind: "export_statement" }],
+    },
+  };
 };
 
 export default transform;

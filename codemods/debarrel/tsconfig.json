@@ -10,6 +10,8 @@
     "noImplicitReturns": true,
     "noFallthroughCasesInSwitch": true,
     "noUncheckedIndexedAccess": true,
+    // Keep this until the LLRT ambient declarations in @codemod.com/jssg-types
+    // stop conflicting with TypeScript's standard library declarations.
     "skipLibCheck": true
   },
   "exclude": ["tests"]
