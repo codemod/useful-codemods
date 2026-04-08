@@ -1,4 +1,4 @@
-import type { Transform, Edit, SgNode } from "codemod:ast-grep";
+import type { Transform, Edit, SgNode, GetSelector } from "codemod:ast-grep";
 import type TSX from "codemod:ast-grep/langs/tsx";
 import type TypeScript from "codemod:ast-grep/langs/typescript";
 import type JavaScript from "codemod:ast-grep/langs/javascript";
@@ -430,6 +430,14 @@ const transform: Transform<Language> = async (root) => {
 
   if (edits.length === 0) return null;
   return rootNode.commitEdits(edits);
+};
+
+export const getSelector: GetSelector<Language> = () => {
+  return {
+    rule: {
+      any: [{ kind: "import_statement" }, { kind: "export_statement" }],
+    },
+  };
 };
 
 export default transform;
