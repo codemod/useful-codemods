@@ -1,0 +1,5 @@
+---
+"debarrel": minor
+---
+
+Add sharding
