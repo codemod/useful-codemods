@@ -1,5 +1,11 @@
 # debarrel
 
+## 0.2.0
+
+### Minor Changes
+
+- 1f944a0: Add sharding
+
 ## 0.1.8
 
 ### Patch Changes
