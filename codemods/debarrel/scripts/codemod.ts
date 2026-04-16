@@ -331,7 +331,7 @@ function addImportsFromRewrites(
   }
 }
 
-const transform: Transform<Language> = async (root) => {
+const codemod: Transform<Language> = async (root) => {
   const rootNode = root.root();
   const filename = root.filename();
   const edits: Edit[] = [];
@@ -440,4 +440,4 @@ export const getSelector: GetSelector<Language> = () => {
   };
 };
 
-export default transform;
+export default codemod;

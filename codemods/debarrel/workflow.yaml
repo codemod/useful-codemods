@@ -51,23 +51,37 @@ nodes:
         shard:
           method:
             type: directory
-            max_files_per_shard: 30
+            max_files_per_shard: 20
           target: ${{ params.shardingDirectoryTarget }}
           output_state: shards
           js-ast-grep:
             js_file: scripts/codemod.ts
-            language: "typescript"
+            language: "tsx"
+            semantic_analysis: workspace
+            include:
+              - "**/*.ts"
+              - "**/*.tsx"
+              - "**/*.jsx"
+              - "**/*.js"
+              - "**/*.mjs"
       - name: "Evaluate shards by codeowner"
         if: params.shardingMethod == "codeowner"
         shard:
           method:
             type: codeowner
-            max_files_per_shard: 30
+            max_files_per_shard: 20
           target: "."
           output_state: shards
           js-ast-grep:
             js_file: scripts/codemod.ts
-            language: "typescript"
+            language: "tsx"
+            semantic_analysis: workspace
+            include:
+              - "**/*.ts"
+              - "**/*.tsx"
+              - "**/*.jsx"
+              - "**/*.js"
+              - "**/*.mjs"
 
   - id: apply-transforms
     name: Apply AST Transformations
@@ -87,7 +101,7 @@ nodes:
         name: "Debarrel: rewrite imports and clean up barrels"
         js-ast-grep:
           js_file: scripts/codemod.ts
-          language: "typescript"
+          language: "tsx"
           semantic_analysis: workspace
 
   - id: install-skill
