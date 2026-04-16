@@ -1,5 +1,0 @@
----
-"debarrel": minor
----
-
-Remove sharding
