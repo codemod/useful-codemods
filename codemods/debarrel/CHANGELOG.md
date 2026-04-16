@@ -1,5 +1,15 @@
 # debarrel
 
+## 0.3.0
+
+### Minor Changes
+
+- de914ad: Remove sharding
+
+### Patch Changes
+
+- 4f6d3d7: Add include paths
+
 ## 0.2.0
 
 ### Minor Changes
