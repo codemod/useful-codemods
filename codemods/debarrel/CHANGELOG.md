@@ -1,5 +1,11 @@
 # debarrel
 
+## 0.3.1
+
+### Patch Changes
+
+- e1ec376: Add sharding back
+
 ## 0.3.0
 
 ### Minor Changes
