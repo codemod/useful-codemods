@@ -2,96 +2,96 @@
 
 version: "1"
 
-state:
-  schema:
-    shards:
-      type: array
-      items:
-        type: object
-        properties:
-          name:
-            type: string
-          team:
-            type: string
-          directory:
-            type: string
-          _meta_shard:
-            type: number
-          _meta_files:
-            type: array
-            items:
-              type: string
+# state:
+#   schema:
+#     shards:
+#       type: array
+#       items:
+#         type: object
+#         properties:
+#           name:
+#             type: string
+#           team:
+#             type: string
+#           directory:
+#             type: string
+#           _meta_shard:
+#             type: number
+#           _meta_files:
+#             type: array
+#             items:
+#               type: string
 
-params:
-  schema:
-    shardingMethod:
-      name: "Sharding Method"
-      description: "The method to use for sharding"
-      type: string
-      default: "codeowner"
-      oneOf:
-        - type: string
-          enum:
-            - "codeowner"
-            - "directory"
-    shardingDirectoryTarget:
-      name: "Sharding Directory Target"
-      description: "When sharding by directory, the directory to target for the codemod"
-      type: string
-      default: "./src"
+# params:
+#   schema:
+#     shardingMethod:
+#       name: "Sharding Method"
+#       description: "The method to use for sharding"
+#       type: string
+#       default: "codeowner"
+#       oneOf:
+#         - type: string
+#           enum:
+#             - "codeowner"
+#             - "directory"
+#     shardingDirectoryTarget:
+#       name: "Sharding Directory Target"
+#       description: "When sharding by directory, the directory to target for the codemod"
+#       type: string
+#       default: "./src"
 
 nodes:
-  - id: evaluate-shards
-    name: Evaluate Shards
-    trigger:
-      type: automatic
-    steps:
-      - name: "Evaluate shards by directory"
-        if: params.shardingMethod == "directory"
-        shard:
-          method:
-            type: directory
-            max_files_per_shard: 20
-          target: ${{ params.shardingDirectoryTarget }}
-          output_state: shards
-          js-ast-grep:
-            js_file: scripts/codemod.ts
-            language: "tsx"
-            semantic_analysis: workspace
-            include:
-              - "**/*.ts"
-              - "**/*.tsx"
-              - "**/*.jsx"
-              - "**/*.js"
-              - "**/*.mjs"
-      - name: "Evaluate shards by codeowner"
-        if: params.shardingMethod == "codeowner"
-        shard:
-          method:
-            type: codeowner
-            max_files_per_shard: 20
-          target: "."
-          output_state: shards
-          js-ast-grep:
-            js_file: scripts/codemod.ts
-            language: "tsx"
-            semantic_analysis: workspace
-            include:
-              - "**/*.ts"
-              - "**/*.tsx"
-              - "**/*.jsx"
-              - "**/*.js"
-              - "**/*.mjs"
+  # - id: evaluate-shards
+  #   name: Evaluate Shards
+  #   trigger:
+  #     type: automatic
+  #   steps:
+  #     - name: "Evaluate shards by directory"
+  #       if: params.shardingMethod == "directory"
+  #       shard:
+  #         method:
+  #           type: directory
+  #           max_files_per_shard: 20
+  #         target: ${{ params.shardingDirectoryTarget }}
+  #         output_state: shards
+  #         js-ast-grep:
+  #           js_file: scripts/codemod.ts
+  #           language: "tsx"
+  #           semantic_analysis: workspace
+  #           include:
+  #             - "**/*.ts"
+  #             - "**/*.tsx"
+  #             - "**/*.jsx"
+  #             - "**/*.js"
+  #             - "**/*.mjs"
+  #     - name: "Evaluate shards by codeowner"
+  #       if: params.shardingMethod == "codeowner"
+  #       shard:
+  #         method:
+  #           type: codeowner
+  #           max_files_per_shard: 20
+  #         target: "."
+  #         output_state: shards
+  #         js-ast-grep:
+  #           js_file: scripts/codemod.ts
+  #           language: "tsx"
+  #           semantic_analysis: workspace
+  #           include:
+  #             - "**/*.ts"
+  #             - "**/*.tsx"
+  #             - "**/*.jsx"
+  #             - "**/*.js"
+  #             - "**/*.mjs"
 
   - id: apply-transforms
     name: Apply AST Transformations
-    trigger:
-      type: manual
-    depends_on:
-      - evaluate-shards
-    strategy:
-      type: matrix
-      from_state: shards
+    # trigger:
+    #   type: manual
+    # depends_on:
+    #   - evaluate-shards
+    # strategy:
+    #   type: matrix
+    #   from_state: shards
     pull_request:
       title: "[DRAFT] refactor: Run debarrel shard ${{ matrix.name }}"
       body: "This pull request runs debarrel for shard ${{ matrix.name }}."
@@ -104,13 +104,13 @@ nodes:
           language: "tsx"
           semantic_analysis: workspace
 
-  - id: install-skill
-    name: Install Skill
-    trigger:
-      type: manual
-    depends_on:
-      - apply-transforms
-    steps:
+  # - id: install-skill
+  #   name: Install Skill
+  #   trigger:
+  #     type: manual
+  #   depends_on:
+  #     - apply-transforms
+  #   steps:
       - name: "Install debarrel skill"
         install-skill:
           package: "debarrel"
