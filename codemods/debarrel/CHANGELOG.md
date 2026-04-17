@@ -1,5 +1,11 @@
 # debarrel
 
+## 0.3.3
+
+### Patch Changes
+
+- 3299c10: Fix issue with adding import
+
 ## 0.3.2
 
 ### Patch Changes
