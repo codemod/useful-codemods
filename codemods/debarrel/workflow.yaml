@@ -39,6 +39,11 @@ params:
       description: "When sharding by directory, the directory to target for the codemod"
       type: string
       default: "./src"
+    pr_size:
+      name: "PR Size"
+      description: "The maximum number of files to include in each PR"
+      type: number
+      default: 20
 
 nodes:
   - id: evaluate-shards
@@ -51,7 +56,7 @@ nodes:
         shard:
           method:
             type: directory
-            max_files_per_shard: 20
+            max_files_per_shard: ${{ params.pr_size }}
           target: ${{ params.shardingDirectoryTarget }}
           output_state: shards
           js-ast-grep:
@@ -69,7 +74,7 @@ nodes:
         shard:
           method:
             type: codeowner
-            max_files_per_shard: 20
+            max_files_per_shard: ${{ params.pr_size }}
           target: "."
           output_state: shards
           js-ast-grep:
