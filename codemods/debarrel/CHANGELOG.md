@@ -1,5 +1,11 @@
 # debarrel
 
+## 0.3.2
+
+### Patch Changes
+
+- 284c1d7: Configurable PR size via parameters
+
 ## 0.3.1
 
 ### Patch Changes
