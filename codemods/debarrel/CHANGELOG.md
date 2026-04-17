@@ -1,5 +1,11 @@
 # debarrel
 
+## 0.4.0
+
+### Minor Changes
+
+- b4eab4e: handle type-qualified specifiers in partial barrel rewrites
+
 ## 0.3.3
 
 ### Patch Changes
