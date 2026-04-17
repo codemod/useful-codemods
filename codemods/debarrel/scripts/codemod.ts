@@ -2,7 +2,7 @@ import type { Transform, Edit, SgNode, GetSelector } from "codemod:ast-grep";
 import type TSX from "codemod:ast-grep/langs/tsx";
 import type TypeScript from "codemod:ast-grep/langs/typescript";
 import type JavaScript from "codemod:ast-grep/langs/javascript";
-import { addImport, removeImport } from "@jssg/utils/javascript/imports";
+import { addImport } from "@jssg/utils/javascript/imports";
 import path from "path";
 import fs from "fs";
 
@@ -403,14 +403,33 @@ const codemod: Transform<Language> = async (root) => {
       }
       edits.push(importStmt.replace(lines.join("\n")));
     } else {
-      // Partial — some specifiers stay with the barrel.
-      const removeEdit = removeImport(rootNode, {
-        type: "named",
-        specifiers: rewrites.map((rw) => rw.consumerName),
-        from: importPath,
-      });
-      if (removeEdit) edits.push(removeEdit);
-      addImportsFromRewrites(rootNode, byPath, edits);
+      // Partial — some specifiers stay with the barrel. Replace the entire
+      // import statement in-place (residual barrel + new direct imports) to
+      // avoid removeImport/addImport conflicts and to correctly handle
+      // `type`-qualified specifiers that removeImport cannot match.
+      const rewrittenNames = new Set(rewrites.map((rw) => rw.consumerName));
+      const remainingSpecTexts: string[] = [];
+      if (namedImports) {
+        for (const spec of namedImports.findAll({
+          rule: { kind: "import_specifier" },
+        })) {
+          const identifiers = spec.findAll({ rule: { kind: "identifier" } });
+          const localBinding = identifiers[identifiers.length - 1];
+          if (localBinding && !rewrittenNames.has(localBinding.text())) {
+            remainingSpecTexts.push(spec.text());
+          }
+        }
+      }
+      const lines: string[] = [];
+      if (remainingSpecTexts.length > 0) {
+        lines.push(
+          `import { ${remainingSpecTexts.join(", ")} } from ${quoteChar}${importPath}${quoteChar};`,
+        );
+      }
+      for (const [sourcePath, specs] of byPath) {
+        lines.push(buildImportText(sourcePath, specs, quoteChar));
+      }
+      edits.push(importStmt.replace(lines.join("\n")));
     }
   }
 
