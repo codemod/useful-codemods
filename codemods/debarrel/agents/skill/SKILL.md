@@ -4,7 +4,7 @@ description: "Prevent creation of barrel files in JS/TS codebases. Provides mass
 allowed-tools:
   - Bash(codemod debarrel)
   - Bash(npx codemod debarrel)
-codemod-compatibility: mcs-v1
+codemod-compatibility: skill-package-v1
 codemod-skill-version: 1.0.0
 ---
 
@@ -19,6 +19,7 @@ npx codemod debarrel
 ```
 
 This will:
+
 - Identify all barrel `index.ts`/`index.js` files (files that only re-export from sibling modules).
 - Rewrite every consumer import to point at the actual source module.
 - Rename the old barrel file to `index.barrel.bak.ts` so it can be reviewed and deleted.
