@@ -192,14 +192,18 @@ interface SpecRewrite {
 }
 
 function getFactoryReturnObject(factory: SgNode<Language>): SgNode<Language> | null {
-  if (!factory.is("arrow_function")) return null;
+  if (!factory.is("arrow_function") && !factory.is("function_expression")) {
+    return null;
+  }
+
   // () => ({ ... })
   const paren = factory.find({ rule: { kind: "parenthesized_expression" } });
   if (paren) {
     const obj = paren.children().find((c) => c.is("object"));
     if (obj) return obj;
   }
-  // () => { return { ... }; }
+
+  // () => { return { ... }; } / function () { return { ... }; }
   const block = factory.find({ rule: { kind: "statement_block" } });
   if (block) {
     const ret = block.find({ rule: { kind: "return_statement" } });
