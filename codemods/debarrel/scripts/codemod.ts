@@ -498,11 +498,19 @@ const codemod: Transform<Language> = async (root) => {
       if (!exprStmt) continue;
 
       if (mockArgs.length === 1) {
-        // Automock: jest.mock('./barrel') → one call per unique new path
+        // Preserve the original barrel automock unless we can prove the barrel
+        // import was fully removed; add automocks for the rewritten direct paths.
         const uniquePaths = [...new Set(nameMap.values())];
-        const lines = uniquePaths.map((p) => `${fnText}(${quoteChar}${p}${quoteChar});`);
+        const lines = [
+          exprStmt.text(),
+          ...uniquePaths.map((p) => `${fnText}(${quoteChar}${p}${quoteChar});`),
+        ];
         edits.push(exprStmt.replace(lines.join("\n")));
       } else if (mockArgs.length >= 2) {
+        // Rewriting factory mocks can drop the original barrel mock while the file
+        // still imports some symbols from the barrel. Without explicit proof that
+        // the barrel import was fully rewritten away, leave factory mocks unchanged.
+        continue;
         // Factory mock: jest.mock('./barrel', () => ({ Key: value }))
         const factory = mockArgs[1];
         if (!factory) continue;
