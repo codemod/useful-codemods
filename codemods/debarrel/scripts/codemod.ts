@@ -191,6 +191,31 @@ interface SpecRewrite {
   importType: "default" | "named" | "namespace";
 }
 
+function getFactoryReturnObject(factory: SgNode<Language>): SgNode<Language> | null {
+  if (!factory.is("arrow_function")) return null;
+  // () => ({ ... })
+  const paren = factory.find({ rule: { kind: "parenthesized_expression" } });
+  if (paren) {
+    const obj = paren.children().find((c) => c.is("object"));
+    if (obj) return obj;
+  }
+  // () => { return { ... }; }
+  const block = factory.find({ rule: { kind: "statement_block" } });
+  if (block) {
+    const ret = block.find({ rule: { kind: "return_statement" } });
+    if (ret) {
+      const retParen = ret.find({ rule: { kind: "parenthesized_expression" } });
+      if (retParen) {
+        const obj = retParen.children().find((c) => c.is("object"));
+        if (obj) return obj;
+      }
+      const obj = ret.find({ rule: { kind: "object" } });
+      if (obj) return obj;
+    }
+  }
+  return null;
+}
+
 /**
  * Given a definition result for an import specifier, resolve it to
  * a direct import path bypassing the barrel.
@@ -335,6 +360,8 @@ const codemod: Transform<Language> = async (root) => {
   const rootNode = root.root();
   const filename = root.filename();
   const edits: Edit[] = [];
+  // Maps barrel import path → (consumer name → new direct path), for jest/vi mock updates
+  const barrelRewrites = new Map<string, Map<string, string>>();
 
   for (const importStmt of rootNode.findAll({
     rule: { kind: "import_statement" },
@@ -391,6 +418,18 @@ const codemod: Transform<Language> = async (root) => {
 
     if (rewrites.length === 0) continue;
 
+    // Track barrel path → export names for jest/vi mock updates below
+    {
+      let nameMap = barrelRewrites.get(importPath);
+      if (!nameMap) {
+        nameMap = new Map();
+        barrelRewrites.set(importPath, nameMap);
+      }
+      for (const rw of rewrites) {
+        nameMap.set(rw.consumerName, rw.newImportPath);
+      }
+    }
+
     const byPath = groupByPath(rewrites);
 
     if (rewrites.length === totalSpecifiers) {
@@ -430,6 +469,97 @@ const codemod: Transform<Language> = async (root) => {
         lines.push(buildImportText(sourcePath, specs, quoteChar));
       }
       edits.push(importStmt.replace(lines.join("\n")));
+    }
+  }
+
+  // Update jest.mock / vi.mock calls that reference barrel paths we rewrote above
+  if (barrelRewrites.size > 0) {
+    for (const callExpr of rootNode.findAll({ rule: { kind: "call_expression" } })) {
+      const fnNode = callExpr.children()[0];
+      if (!fnNode) continue;
+      const fnText = fnNode.text();
+      if (fnText !== "jest.mock" && fnText !== "vi.mock") continue;
+
+      const argsNode = callExpr.find({ rule: { kind: "arguments" } });
+      if (!argsNode) continue;
+      const mockArgs = argsNode.children().filter((c) => c.isNamed());
+      if (mockArgs.length === 0) continue;
+
+      const pathArg = mockArgs[0];
+      if (!pathArg || !pathArg.is("string")) continue;
+      const mockPath = getStringContent(pathArg);
+      if (!mockPath) continue;
+
+      const nameMap = barrelRewrites.get(mockPath);
+      if (!nameMap || nameMap.size === 0) continue;
+
+      const quoteChar = pathArg.text().startsWith('"') ? '"' : "'";
+      const exprStmt = callExpr.ancestors().find((a) => a.is("expression_statement"));
+      if (!exprStmt) continue;
+
+      if (mockArgs.length === 1) {
+        // Automock: jest.mock('./barrel') → one call per unique new path
+        const uniquePaths = [...new Set(nameMap.values())];
+        const lines = uniquePaths.map((p) => `${fnText}(${quoteChar}${p}${quoteChar});`);
+        edits.push(exprStmt.replace(lines.join("\n")));
+      } else if (mockArgs.length >= 2) {
+        // Factory mock: jest.mock('./barrel', () => ({ Key: value }))
+        const factory = mockArgs[1];
+        if (!factory) continue;
+        const obj = getFactoryReturnObject(factory);
+        if (!obj) continue;
+
+        if (obj.children().some((c) => c.is("spread_element"))) continue;
+
+        const pairsByPath = new Map<string, string[]>();
+        let allMapped = true;
+        for (const child of obj.children()) {
+          if (!child.isNamed()) continue;
+          let keyText: string | undefined;
+          let pairText: string;
+          if (child.is("pair")) {
+            const keyNode = child.children()[0];
+            if (keyNode?.is("property_identifier") || keyNode?.is("identifier")) {
+              keyText = keyNode.text();
+            } else if (keyNode?.is("string")) {
+              keyText = getStringContent(keyNode) ?? undefined;
+            } else {
+              allMapped = false;
+              break;
+            }
+            pairText = child.text();
+          } else if (child.is("shorthand_property_identifier")) {
+            keyText = child.text();
+            pairText = child.text();
+          } else {
+            allMapped = false;
+            break;
+          }
+          if (!keyText) {
+            allMapped = false;
+            break;
+          }
+          const newPath = nameMap.get(keyText);
+          if (!newPath) {
+            allMapped = false;
+            break;
+          }
+          const existing = pairsByPath.get(newPath) ?? [];
+          existing.push(pairText);
+          pairsByPath.set(newPath, existing);
+        }
+
+        if (!allMapped || pairsByPath.size === 0) continue;
+
+        const lines: string[] = [];
+        for (const [newPath, pairs] of pairsByPath) {
+          const pairsText = pairs.join(",\n  ");
+          lines.push(
+            `${fnText}(${quoteChar}${newPath}${quoteChar}, () => ({\n  ${pairsText},\n}));`,
+          );
+        }
+        edits.push(exprStmt.replace(lines.join("\n")));
+      }
     }
   }
 
