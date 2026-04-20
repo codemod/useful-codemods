@@ -1,5 +1,11 @@
 # debarrel
 
+## 0.4.1
+
+### Patch Changes
+
+- b0d6ca0: Update the debarrel skill compatibility marker to `skill-package-v1`.
+
 ## 0.4.0
 
 ### Minor Changes
