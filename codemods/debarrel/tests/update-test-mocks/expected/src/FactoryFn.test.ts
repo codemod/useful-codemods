@@ -1,12 +1,14 @@
 import { Button } from "./components/Button";
 import { Modal } from "./components/Modal";
 
-jest.mock("./components", () => ({
-  Button: jest.fn(() => null),
-  Modal: jest.fn(() => null),
-}));
+jest.mock("./components", function () {
+  return {
+    Button: jest.fn(() => null),
+    Modal: jest.fn(() => null),
+  };
+});
 
-describe("Components", () => {
+describe("Factory function form", () => {
   it("works", () => {
     expect(Button).toBeDefined();
     expect(Modal).toBeDefined();
