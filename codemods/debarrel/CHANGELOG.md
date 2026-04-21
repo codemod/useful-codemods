@@ -1,5 +1,11 @@
 # debarrel
 
+## 0.5.0
+
+### Minor Changes
+
+- 6590f6f: fix jest mocks in test files after transforming barrel imports
+
 ## 0.4.1
 
 ### Patch Changes
