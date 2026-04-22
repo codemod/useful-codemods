@@ -11,7 +11,14 @@ repository: https://github.com/codemod/useful-codemods
 targets:
   languages: ["typescript"]
 
-keywords: ["transformation", "migration"]
+keywords:
+  [
+    "barrel-files",
+    "dependency-graph",
+    "build-performance",
+    "ci-performance",
+    "code-health",
+  ]
 
 registry:
   access: "public"
