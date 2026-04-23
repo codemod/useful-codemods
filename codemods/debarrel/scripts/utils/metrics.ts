@@ -6,6 +6,7 @@ import {
   isInsideNodeModules,
   isLocalRelativePath,
 } from "./paths.ts";
+import { getBarrelEmissions, fileHasTopLevelSideEffectOnlyImport } from "./barrel-metric-ast.ts";
 
 const barrelMetric = useMetricAtom("barrel-metric");
 
@@ -132,14 +133,9 @@ function resolveLocalModule(
 }
 
 function fileContentHasSideEffectImport(filePath: string): boolean {
-  try {
-    const content = fs.readFileSync(filePath, "utf8");
-    // Strip comments first so bare imports inside `/* ... */` or `// ...`
-    // don't falsely trip `cycles-or-side-effects` risk amplification.
-    return /^\s*import\s+["'][^"']+["']\s*;?\s*$/m.test(stripComments(content));
-  } catch {
-    return false;
-  }
+  return fileHasTopLevelSideEffectOnlyImport(filePath, (p) =>
+    fs.readFileSync(p, "utf8"),
+  );
 }
 
 function computeBarrelAnalysis(params: {
@@ -211,131 +207,33 @@ function findSiblingBarrel(filename: string): string | null {
   return null;
 }
 
-interface BarrelImportBinding {
-  localName: string;
-  source: string;
-}
-
-/**
- * Parse `import ... from "..."` statements and return bindings by local
- * name → source. Regex-based so we can resolve sourceless `export { X };`
- * patterns without an AST.
- */
-function collectImportBindings(content: string): BarrelImportBinding[] {
-  const bindings: BarrelImportBinding[] = [];
-  const importRe =
-    /import\s+([\s\S]+?)\s+from\s+["']([^"']+)["']\s*;?/g;
-  let m: RegExpExecArray | null;
-  while ((m = importRe.exec(content)) !== null) {
-    const rawClause = m[1];
-    const source = m[2];
-    if (!rawClause || !source) continue;
-
-    // Drop a leading `type` keyword (TS type-only imports). Otherwise the
-    // default/namespace fallback regexes interpret `type` itself as a
-    // default binding and later misattribute sourceless `export { type };`.
-    const clause = rawClause.replace(/^\s*type\s+/, "");
-
-    const namedMatch = clause.match(/\{([^}]*)\}/);
-    if (namedMatch && namedMatch[1] !== undefined) {
-      for (const spec of namedMatch[1].split(",")) {
-        const parts = spec.trim().split(/\s+as\s+/);
-        const local = (parts[1] ?? parts[0] ?? "")
-          .trim()
-          .replace(/^type\s+/, "");
-        if (local) bindings.push({ localName: local, source });
-      }
-    }
-
-    const withoutNamed = clause.replace(/\{[^}]*\}/g, "");
-
-    const nsMatch = withoutNamed.match(/\*\s+as\s+([\w$]+)/);
-    if (nsMatch && nsMatch[1]) {
-      bindings.push({ localName: nsMatch[1], source });
-    }
-
-    const defaultMatch = withoutNamed.match(/(?:^|,)\s*([\w$]+)\s*(?:,|$)/);
-    if (defaultMatch && defaultMatch[1]) {
-      bindings.push({ localName: defaultMatch[1], source });
-    }
-  }
-  return bindings;
-}
-
-function stripComments(content: string): string {
-  return content
-    .replace(/\/\*[\s\S]*?\*\//g, "")
-    .replace(/\/\/.*$/gm, "");
-}
-
 /**
  * Walk every re-export in `barrelFile` and emit one `barrel-metric` event
- * per analyzed re-export source. Uses a regex-based scan so the metric set
- * is identical regardless of whether the barrel itself or a sibling triggered
- * the emission.
+ * per analyzed re-export source, using an ast-grep parse of the barrel file
+ * (and the same for side-effect `import` heuristics on resolved targets).
  *
  * Handles:
- *   1. `export * from "..."`           (wildcard)
- *   2. `export * as X from "..."`      (wildcard)
- *   3. `export { A, B } from "..."`    (explicit)
- *   4. `import { X } from "..."; export { X };` (explicit, per traced source)
+ *   1. `export * from "..."` / `export type * from "..."` (wildcard)
+ *   2. `export * as X from "..."` (any valid identifier, including non-ASCII)
+ *   3. `export { A, B } from "..."` (explicit) including `export type { } from`
+ *   4. `import { X } from "..."; export { X };` (explicit, per sourceless name)
  */
 function emitMetricsForBarrelFile(barrelFile: string): void {
-  let content: string;
-  try {
-    content = fs.readFileSync(barrelFile, "utf8");
-  } catch {
-    return;
-  }
-  const code = stripComments(content);
-
-  const barrelHasSideEffects =
-    /^[ \t]*import\s+["'][^"']+["']\s*;?\s*$/m.test(code);
-
-  const emitForSource = (source: string, isWildcard: boolean): void => {
-    if (!isLocalRelativePath(source)) return;
+  const parsed = getBarrelEmissions(barrelFile, (p) =>
+    fs.readFileSync(p, "utf8"),
+  );
+  if (!parsed) return;
+  const { barrelHasSideEffects, emissions } = parsed;
+  for (const e of emissions) {
+    if (!isLocalRelativePath(e.source)) continue;
     emitBarrelMetric(
       computeBarrelAnalysis({
         barrelFile,
-        sourceFromBarrel: source,
-        isWildcard,
+        sourceFromBarrel: e.source,
+        isWildcard: e.isWildcard,
         barrelHasSideEffects,
       }),
     );
-  };
-
-  // All three regexes tolerate an optional `type` keyword (`export type *`,
-  // `export type { ... } from ...`, `export type { ... };`) so type-only
-  // re-exports — which debarrel does rewrite — are counted too.
-  const wildcardRe =
-    /export\s+(?:type\s+)?\*(?:\s+as\s+[\w$]+)?\s+from\s+["']([^"']+)["']\s*;?/g;
-  let m: RegExpExecArray | null;
-  while ((m = wildcardRe.exec(code)) !== null) {
-    if (m[1]) emitForSource(m[1], true);
-  }
-
-  const explicitFromRe =
-    /export\s+(?:type\s+)?\{[^}]*\}\s*from\s+["']([^"']+)["']\s*;?/g;
-  while ((m = explicitFromRe.exec(code)) !== null) {
-    if (m[1]) emitForSource(m[1], false);
-  }
-
-  const importBindings = collectImportBindings(code);
-  if (importBindings.length === 0) return;
-  const bindingMap = new Map<string, string>();
-  for (const b of importBindings) bindingMap.set(b.localName, b.source);
-
-  const exportSourcelessRe = /export\s+(?:type\s+)?\{([^}]*)\}\s*(?:;|$)/gm;
-  while ((m = exportSourcelessRe.exec(code)) !== null) {
-    if (m[1] === undefined) continue;
-    for (const spec of m[1].split(",")) {
-      const parts = spec.trim().split(/\s+as\s+/);
-      const localName = parts[0]?.trim().replace(/^type\s+/, "");
-      if (!localName) continue;
-      const source = bindingMap.get(localName);
-      if (!source) continue;
-      emitForSource(source, false);
-    }
   }
 }
 

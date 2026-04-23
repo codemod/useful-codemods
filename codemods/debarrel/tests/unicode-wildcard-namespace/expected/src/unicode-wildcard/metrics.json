@@ -3,9 +3,9 @@
     {
       "cardinality": {
         "chaining": "single-level",
-        "export_style": "wildcard",
+        "export_style": "explicit",
         "file": "src/unicode-wildcard/index.ts",
-        "migration_complexity_score": "1",
+        "migration_complexity_score": "0",
         "risk_amplifier": "none"
       },
       "count": 1
@@ -13,9 +13,9 @@
     {
       "cardinality": {
         "chaining": "single-level",
-        "export_style": "explicit",
+        "export_style": "wildcard",
         "file": "src/unicode-wildcard/index.ts",
-        "migration_complexity_score": "0",
+        "migration_complexity_score": "1",
         "risk_amplifier": "none"
       },
       "count": 1
