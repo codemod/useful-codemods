@@ -1,0 +1,14 @@
+{
+  "barrel-metric": [
+    {
+      "cardinality": {
+        "chaining": "chained",
+        "export_style": "explicit",
+        "file": "packages/lib/src/index.ts",
+        "migration_complexity_score": "2",
+        "risk_amplifier": "heavy-usage-or-public-api"
+      },
+      "count": 1
+    }
+  ]
+}

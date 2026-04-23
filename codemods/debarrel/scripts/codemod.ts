@@ -15,12 +15,15 @@ import {
   rewriteMockCalls,
   type BarrelMockInfo,
 } from "./utils/mocks.ts";
+import { emitMetricsForBarrelSibling } from "./utils/metrics.ts";
 
 const codemod: Codemod<Language> = async (root) => {
   const rootNode = root.root();
   const filename = root.filename();
   const edits: Edit[] = [];
   const barrelRewrites = new Map<string, BarrelMockInfo>();
+
+  emitMetricsForBarrelSibling(filename);
 
   for (const importStmt of rootNode.findAll({
     rule: { kind: "import_statement" },
