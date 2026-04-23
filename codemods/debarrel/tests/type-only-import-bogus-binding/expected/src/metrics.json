@@ -1,0 +1,24 @@
+{
+  "barrel-metric": [
+    {
+      "cardinality": {
+        "chaining": "single-level",
+        "export_style": "explicit",
+        "file": "src/index.ts",
+        "migration_complexity_score": "0",
+        "risk_amplifier": "none"
+      },
+      "count": 1
+    },
+    {
+      "cardinality": {
+        "chaining": "single-level",
+        "export_style": "explicit",
+        "file": "src/index.ts",
+        "migration_complexity_score": "2",
+        "risk_amplifier": "cycles-or-side-effects"
+      },
+      "count": 1
+    }
+  ]
+}

@@ -134,7 +134,9 @@ function resolveLocalModule(
 function fileContentHasSideEffectImport(filePath: string): boolean {
   try {
     const content = fs.readFileSync(filePath, "utf8");
-    return /^\s*import\s+["'][^"']+["']\s*;?\s*$/m.test(content);
+    // Strip comments first so bare imports inside `/* ... */` or `// ...`
+    // don't falsely trip `cycles-or-side-effects` risk amplification.
+    return /^\s*import\s+["'][^"']+["']\s*;?\s*$/m.test(stripComments(content));
   } catch {
     return false;
   }
@@ -225,15 +227,22 @@ function collectImportBindings(content: string): BarrelImportBinding[] {
     /import\s+([\s\S]+?)\s+from\s+["']([^"']+)["']\s*;?/g;
   let m: RegExpExecArray | null;
   while ((m = importRe.exec(content)) !== null) {
-    const clause = m[1];
+    const rawClause = m[1];
     const source = m[2];
-    if (!clause || !source) continue;
+    if (!rawClause || !source) continue;
+
+    // Drop a leading `type` keyword (TS type-only imports). Otherwise the
+    // default/namespace fallback regexes interpret `type` itself as a
+    // default binding and later misattribute sourceless `export { type };`.
+    const clause = rawClause.replace(/^\s*type\s+/, "");
 
     const namedMatch = clause.match(/\{([^}]*)\}/);
     if (namedMatch && namedMatch[1] !== undefined) {
       for (const spec of namedMatch[1].split(",")) {
         const parts = spec.trim().split(/\s+as\s+/);
-        const local = (parts[1] ?? parts[0] ?? "").trim();
+        const local = (parts[1] ?? parts[0] ?? "")
+          .trim()
+          .replace(/^type\s+/, "");
         if (local) bindings.push({ localName: local, source });
       }
     }
@@ -295,14 +304,18 @@ function emitMetricsForBarrelFile(barrelFile: string): void {
     );
   };
 
+  // All three regexes tolerate an optional `type` keyword (`export type *`,
+  // `export type { ... } from ...`, `export type { ... };`) so type-only
+  // re-exports — which debarrel does rewrite — are counted too.
   const wildcardRe =
-    /export\s+\*(?:\s+as\s+[\w$]+)?\s+from\s+["']([^"']+)["']\s*;?/g;
+    /export\s+(?:type\s+)?\*(?:\s+as\s+[\w$]+)?\s+from\s+["']([^"']+)["']\s*;?/g;
   let m: RegExpExecArray | null;
   while ((m = wildcardRe.exec(code)) !== null) {
     if (m[1]) emitForSource(m[1], true);
   }
 
-  const explicitFromRe = /export\s*\{[^}]*\}\s*from\s+["']([^"']+)["']\s*;?/g;
+  const explicitFromRe =
+    /export\s+(?:type\s+)?\{[^}]*\}\s*from\s+["']([^"']+)["']\s*;?/g;
   while ((m = explicitFromRe.exec(code)) !== null) {
     if (m[1]) emitForSource(m[1], false);
   }
@@ -312,12 +325,12 @@ function emitMetricsForBarrelFile(barrelFile: string): void {
   const bindingMap = new Map<string, string>();
   for (const b of importBindings) bindingMap.set(b.localName, b.source);
 
-  const exportSourcelessRe = /export\s*\{([^}]*)\}\s*(?:;|$)/gm;
+  const exportSourcelessRe = /export\s+(?:type\s+)?\{([^}]*)\}\s*(?:;|$)/gm;
   while ((m = exportSourcelessRe.exec(code)) !== null) {
     if (m[1] === undefined) continue;
     for (const spec of m[1].split(",")) {
       const parts = spec.trim().split(/\s+as\s+/);
-      const localName = parts[0]?.trim();
+      const localName = parts[0]?.trim().replace(/^type\s+/, "");
       if (!localName) continue;
       const source = bindingMap.get(localName);
       if (!source) continue;
