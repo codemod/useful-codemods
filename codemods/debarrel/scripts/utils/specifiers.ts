@@ -1,4 +1,4 @@
-import type { SgNode } from "codemod:ast-grep";
+import type { SgNode, SgRoot } from "codemod:ast-grep";
 import type { Language } from "./language.ts";
 import { getStringContent } from "./ast.ts";
 import {
@@ -15,6 +15,7 @@ export interface SpecRewrite {
   newImportPath: string;
   localName: string;
   importType: "default" | "named" | "namespace";
+  resolvedFilePath: string;
 }
 
 /**
@@ -24,7 +25,7 @@ export interface SpecRewrite {
 export function resolveSpecifier(
   localBinding: SgNode<Language>,
   importPath: string,
-  def: { kind: string; root: { filename(): string }; node: SgNode<Language> },
+  def: { kind: string; root: SgRoot<Language>; node: SgNode<Language> },
 ): SpecRewrite | null {
   if (def.kind !== "external") return null;
 
@@ -51,6 +52,7 @@ export function resolveSpecifier(
         newImportPath: joinImportPaths(importPath, info.sourceFromBarrel),
         localName: info.localName,
         importType: info.importType,
+        resolvedFilePath: def.root.relativeFilename(),
       };
     }
     // Import-then-reexport: definition landed on import_specifier in the barrel
@@ -72,6 +74,7 @@ export function resolveSpecifier(
       newImportPath: joinImportPaths(importPath, impPath),
       localName: originalName,
       importType: "named",
+      resolvedFilePath: def.root.relativeFilename(),
     };
   }
 

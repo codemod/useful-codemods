@@ -1,4 +1,5 @@
 import type { Codemod, Edit, GetSelector } from "codemod:ast-grep";
+import { useMetricAtom } from "codemod:metrics";
 import path from "path";
 import type { Language } from "./utils/language.ts";
 import { getStringContent } from "./utils/ast.ts";
@@ -16,8 +17,11 @@ import {
   type BarrelMockInfo,
 } from "./utils/mocks.ts";
 
-const codemod: Codemod<Language> = async (root) => {
+const barrelImport = useMetricAtom("barrel_import");
+
+const codemod: Codemod<Language> = async (root, options) => {
   const rootNode = root.root();
+  const relativeFilename = root.relativeFilename();
   const filename = root.filename();
   const edits: Edit[] = [];
   const barrelRewrites = new Map<string, BarrelMockInfo>();
@@ -76,6 +80,14 @@ const codemod: Codemod<Language> = async (root) => {
     }
 
     if (rewrites.length === 0) continue;
+
+    const firstRewrite = rewrites[0];
+    if (firstRewrite) {
+      barrelImport.increment({
+        filePath: firstRewrite.resolvedFilePath,
+        importer: relativeFilename,
+      });
+    }
 
     recordBarrelRewrites(barrelRewrites, importPath, rewrites);
 
