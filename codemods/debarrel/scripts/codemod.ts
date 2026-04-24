@@ -153,12 +153,12 @@ const codemod: Codemod<Language> = async (root, options) => {
   return rootNode.commitEdits(edits);
 };
 
-export const getSelector: GetSelector<Language> = () => {
+export function getSelector(): ReturnType<GetSelector<Language>> {
   return {
     rule: {
       any: [{ kind: "import_statement" }, { kind: "export_statement" }],
     },
   };
-};
+}
 
 export default codemod;
