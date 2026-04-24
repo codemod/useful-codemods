@@ -1,0 +1,25 @@
+{
+  "barrel_import": [
+    {
+      "cardinality": {
+        "filePath": "src/components/index.ts",
+        "importer": "src/Button.test.ts"
+      },
+      "count": 1
+    },
+    {
+      "cardinality": {
+        "filePath": "src/components/index.ts",
+        "importer": "src/Component.test.ts"
+      },
+      "count": 1
+    },
+    {
+      "cardinality": {
+        "filePath": "src/components/index.ts",
+        "importer": "src/FactoryFn.test.ts"
+      },
+      "count": 1
+    }
+  ]
+}
