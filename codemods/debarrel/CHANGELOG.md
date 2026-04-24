@@ -1,5 +1,11 @@
 # debarrel
 
+## 0.6.1
+
+### Patch Changes
+
+- e3763d1: Fix debarrel selector initialization in the current JSSG runtime.
+
 ## 0.6.0
 
 ### Minor Changes
