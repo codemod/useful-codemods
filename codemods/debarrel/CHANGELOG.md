@@ -1,5 +1,11 @@
 # debarrel
 
+## 0.6.0
+
+### Minor Changes
+
+- 2e3b105: Add metrics
+
 ## 0.5.0
 
 ### Minor Changes
