@@ -5,7 +5,6 @@ version: "0.6.1"
 description: "Debarrel JS/TS codebases. Removing barrel files and replacing import statements."
 author: "Mo Mohebifar <mo@codemod.com>"
 license: "MIT"
-workflow: "workflow.yaml"
 repository: https://github.com/codemod/useful-codemods
 
 targets:
@@ -18,3 +17,13 @@ registry:
   visibility: "public"
 
 capabilities: ["fs"]
+
+workflows:
+  - name: regular
+    description: "Just debarrel the whole codebase at once!"
+    default: true
+    path: workflow.yaml
+  - name: sharded
+    description: "A sharded version of the main workflow, which can be used to break down the migration into parallel tasks."
+    default: false
+    path: workflow-sharded.yaml
