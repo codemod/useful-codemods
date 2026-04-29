@@ -1,5 +1,11 @@
 # debarrel
 
+## 0.7.0
+
+### Minor Changes
+
+- 7099b68: Multiple workflows in debarreling codemod
+
 ## 0.6.1
 
 ### Patch Changes
