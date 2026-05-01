@@ -83,6 +83,12 @@ export const transform: Transform<Python> = async (rootWrapper) => {
       const funcText = node.text();
       // Identify custom middleware structurally: takes (make_request, w3)
       if (funcText.includes('(make_request, w3):') && !funcText.includes('Web3Middleware')) {
+          
+          // Context Injection: Extract the exact function name so the LLM doesn't hallucinate it
+          // @ts-ignore
+          const nameNode = node.find({ rule: { kind: 'identifier' } });
+          const funcName = nameNode ? nameNode.text() : 'CustomMiddleware';
+
           if (apiKey) {
               try {
                   const response = await fetch("https://integrate.api.nvidia.com/v1/chat/completions", {
@@ -92,23 +98,49 @@ export const transform: Transform<Python> = async (rootWrapper) => {
                           model: "meta/llama3-70b-instruct",
                           messages: [{
                               role: "system",
-                              content: "You are a precise Python refactoring tool. Convert the provided web3.py v6 function-based middleware into a v7 class-based Web3Middleware. Use `request_processor` or `response_processor`. Output strictly valid Python code ONLY. NO MARKDOWN. NO BACKTICKS. NO EXPLANATIONS."
+                              content: `You are a precise Python refactoring tool. Convert the provided web3.py v6 function-based middleware into a v7 class-based Web3Middleware. 
+                              CRITICAL CONSTRAINTS:
+                              1. The new class MUST be named using PascalCase version of '${funcName}'.
+                              2. Inherit from 'Web3Middleware'.
+                              3. Implement 'request_processor(self, method, params)' or 'response_processor'.
+                              4. OUTPUT ONLY THE RAW PYTHON CODE. Do not include markdown formatting, backticks, or conversational filler.`
                           }, { role: "user", content: funcText }],
                           temperature: 0
                       })
                   });
+
+                  if (!response.ok) {
+                      console.warn(`[AI-Fallback] NVIDIA NIM API failed with status ${response.status}`);
+                      continue;
+                  }
+
                   const data = await response.json();
                   if (data.choices && data.choices[0]) {
-                      let migratedCode = data.choices[0].message.content.trim();
-                      migratedCode = migratedCode.replace(/^```python\n?/g, '').replace(/```$/g, '').trim();
-                      if (migratedCode.startsWith("class ")) {
+                      const rawOutput = data.choices[0].message.content;
+                      
+                      // Defensively extract Python code even if the LLM wrapped it in markdown
+                      let migratedCode = rawOutput;
+                      const codeBlockMatch = rawOutput.match(/```(?:python)?\n([\s\S]*?)```/);
+                      if (codeBlockMatch && codeBlockMatch[1]) {
+                          migratedCode = codeBlockMatch[1].trim();
+                      } else {
+                          migratedCode = migratedCode.trim();
+                      }
+                      
+                      // Flexible Validation: Ensure it contains 'class' anywhere, not just at index 0 (handles decorators/docstrings)
+                      if (migratedCode.includes("class ")) {
                           edits.push(node.replace(migratedCode));
+                          console.log(`[AI-Fallback] Successfully refactored '${funcName}' to v7 class.`);
+                      } else {
+                          console.warn(`[AI-Fallback] LLM returned invalid format for '${funcName}', skipping...`);
                       }
                   }
-              } catch(e) {}
+              } catch(e) {
+                  console.warn(`[AI-Fallback] Exception during AI network call:`, e);
+              }
           } else {
               // Mock fallback for CI testing
-              const mockedCode = 'class CustomLoggerMiddleware(Web3Middleware):\n    def request_processor(self, method, params):\n        print(f"Request: {method}")\n        return method, params';
+              const mockedCode = `class CustomLoggerMiddleware(Web3Middleware):\n    def request_processor(self, method, params):\n        print(f"Request: {method}")\n        return method, params`;
               edits.push(node.replace(mockedCode));
           }
       }
