@@ -2,16 +2,14 @@
   "name": "web3py-v6-to-v7",
   "version": "1.0.0",
   "description": "Web3.py v6 to v7 Migration Codemod",
-  "main": "dist/index.cjs",
   "type": "module",
   "scripts": {
-    "build": "tsc",
-    "test": "node --experimental-vm-modules node_modules/jest/bin/jest.js"
+    "test": "pnpm dlx codemod@latest jssg test -l python ./scripts/codemod.ts",
+    "check-types": "tsc --noEmit"
   },
   "dependencies": {},
   "devDependencies": {
-    "@types/node": "^20.0.0",
-    "typescript": "^5.0.0",
-    "jest": "^29.0.0"
+    "@codemod.com/jssg-types": "catalog:",
+    "typescript": "catalog:"
   }
 }
