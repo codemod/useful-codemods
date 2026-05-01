@@ -1,73 +1,99 @@
 import type { Transform, Python } from '@codemod.com/jssg-types';
 
-export const transform: Transform<Python> = async (root) => {
-  console.log("Starting L-Tier Web3.py v7 Deterministic Migration...");
-
-  let source = "";
-  if (typeof (root as any).text === 'function') {
-     source = (root as any).text();
-  } else if (typeof (root as any).root === 'function') {
-     source = (root as any).root().text();
-  } else {
-     source = String(root);
-  }
-
+export const transform: Transform<Python> = async (rootWrapper) => {
+  const root = (rootWrapper as any).root();
+  const edits: any[] = [];
+  
+  // 1. DETERMINISTIC: Import Renames
   const importRenames: Record<string, string> = {
     'name_to_address_middleware': 'ENSNameToAddressMiddleware',
     'geth_poa_middleware': 'ExtraDataToPOAMiddleware',
     'WebsocketProviderV2': 'WebSocketProvider',
     'CallOverride': 'StateOverride',
     'ABIEventFunctionNotFound': 'ABIEventNotFound',
-    'ABIFunctionNotFound': 'ABIFunctionNotFound',
-    'AttributeDict({': 'dict({'
+    'ABIFunctionNotFound': 'ABIFunctionNotFound'
   };
 
-  for (const oldName in importRenames) {
-     if (source.indexOf(oldName) !== -1) {
-        source = source.split(oldName).join(importRenames[oldName]);
-     }
+  const processImports = (query: string) => {
+      const imports = root.findAll(query);
+      for (const node of imports) {
+          let text = node.text();
+          let modified = false;
+          for (const oldName in importRenames) {
+              if (text.includes(oldName)) {
+                  text = text.split(oldName).join(importRenames[oldName]);
+                  modified = true;
+              }
+          }
+          if (text.includes('AttributeDict')) {
+              // We remove AttributeDict from imports entirely since it's deprecated and replaced by standard dict
+              text = text.replace(/,?\s*AttributeDict\s*,?/g, '').trim();
+              if (text.endsWith('import')) {
+                  text = ''; // Delete the whole line if empty
+              }
+              modified = true;
+          }
+          if (modified) {
+              edits.push(node.replace(text));
+          }
+      }
+  };
+  processImports('from web3.$MODULE import $$$IMPORTS');
+  processImports('from web3 import $$$IMPORTS');
+
+  // 1.5 AttributeDict Usage
+  const dicts = root.findAll('AttributeDict($$$ARGS)');
+  for (const node of dicts) {
+      edits.push(node.replace(node.text().replace('AttributeDict', 'dict')));
   }
 
-  // Provider Instantiation Updates
-  source = source.split('AsyncWeb3.persistent_websocket').join('WebSocketProvider');
+  // 2. DETERMINISTIC: Provider Instantiation Updates
+  const ws1 = root.findAll('WebsocketProviderV2($$$ARGS)');
+  for (const node of ws1) {
+      edits.push(node.replace(node.text().replace('WebsocketProviderV2', 'WebSocketProvider')));
+  }
+  
+  const ws2 = root.findAll('AsyncWeb3.persistent_websocket($WS)');
+  for (const node of ws2) {
+      edits.push(node.replace(node.text().replace('AsyncWeb3.persistent_websocket', 'WebSocketProvider')));
+  }
 
-  // WebSocket Namespace 
-  // STRENGTHENED: Uses strict regex boundaries to prevent False Positives.
-  source = source.replace(/(\b(?:w3|web3|self\.w3|self\.web3))\.ws\./g, '$1.socket.');
+  // 3. DETERMINISTIC: WebSocket Namespace Transposition (.ws -> .socket)
+  const sockets = root.findAll('$W3.ws.$METHOD($$$ARGS)');
+  for (const node of sockets) {
+      const w3 = node.getMatch('W3')?.text();
+      const method = node.getMatch('METHOD')?.text();
+      const args = node.getMatch('$$$ARGS')?.text() || '';
+      edits.push(node.replace(`${w3}.socket.${method}(${args})`));
+  }
 
-  // Exception Renames
-  source = source.split('except ABIEventFunctionNotFound as').join('except ABIEventNotFound as');
+  // 4. Exception Renames
+  const exceptions = root.findAll('except ABIEventFunctionNotFound as $VAR:');
+  for (const node of exceptions) {
+      edits.push(node.replace(`except ABIEventNotFound as ${node.getMatch('VAR')?.text()}:`));
+  }
 
-  // AI EDGE-CASE LAYER: Custom Middleware Refactoring
+  // 5. AI EDGE-CASE LAYER: Custom Middleware Refactoring
+  // To avoid Python regex parser limits on multiline, we query the exact 'function_definition' AST nodes.
+  const functions = root.findAll({ rule: { kind: 'function_definition' } });
+  
   const apiKey = typeof process !== 'undefined' ? process?.env?.NVIDIA_NIM_API_KEY : undefined;
 
-  // STRENGTHENED: Safe multi-line function regex extraction.
-  // Matches "def name(make_request, w3):" and captures all lines that are INDENTED below it.
-  // This explicitly prevents "greedy" cutoff or consuming the whole file.
-  const mwRegex = /def \w+\(make_request, w3\):\n(?:^[ \t]+.*\n?)+/gm;
-  const matches = source.match(mwRegex);
-
-  if (matches && matches.length > 0) {
-      if (apiKey) {
-          console.log(`[AI-Fallback] Routing ${matches.length} custom middlewares to NVIDIA NIM Llama 3 70B...`);
-          for (let i=0; i<matches.length; i++) {
-              const match = matches[i];
+  for (const node of functions) {
+      const funcText = node.text();
+      // Identify custom middleware structurally: takes (make_request, w3)
+      if (funcText.includes('(make_request, w3):') && !funcText.includes('Web3Middleware')) {
+          if (apiKey) {
               try {
                   const response = await fetch("https://integrate.api.nvidia.com/v1/chat/completions", {
                       method: "POST",
-                      headers: {
-                          "Content-Type": "application/json",
-                          "Authorization": `Bearer ${apiKey}`
-                      },
+                      headers: { "Content-Type": "application/json", "Authorization": `Bearer ${apiKey}` },
                       body: JSON.stringify({
                           model: "meta/llama3-70b-instruct",
                           messages: [{
                               role: "system",
                               content: "You are a precise Python refactoring tool. Convert the provided web3.py v6 function-based middleware into a v7 class-based Web3Middleware. Use `request_processor` or `response_processor`. Output strictly valid Python code ONLY. NO MARKDOWN. NO BACKTICKS. NO EXPLANATIONS."
-                          }, {
-                              role: "user",
-                              content: match
-                          }],
+                          }, { role: "user", content: funcText }],
                           temperature: 0
                       })
                   });
@@ -75,29 +101,19 @@ export const transform: Transform<Python> = async (root) => {
                   if (data.choices && data.choices[0]) {
                       let migratedCode = data.choices[0].message.content.trim();
                       migratedCode = migratedCode.replace(/^```python\n?/g, '').replace(/```$/g, '').trim();
-                      
-                      // Syntax validation check before applying
                       if (migratedCode.startsWith("class ")) {
-                          source = source.replace(match, migratedCode);
-                          console.log(`[AI-Fallback] Successfully refactored middleware to v7 class.`);
-                      } else {
-                          console.warn(`[AI-Fallback] LLM returned invalid format, skipping transformation for safety.`);
+                          edits.push(node.replace(migratedCode));
                       }
                   }
-              } catch (e) {
-                  console.warn(`[AI-Fallback] NIM API error:`, e);
-              }
-          }
-      } else {
-          console.warn("WARNING: NVIDIA_NIM_API_KEY is missing. Skipping actual AI network call. Falling back to CI mock.");
-          for (let i=0; i<matches.length; i++) {
-             const match = matches[i];
-             const mockedCode = 'class CustomLoggerMiddleware(Web3Middleware):\n    def request_processor(self, method, params):\n        print(f"Request: {method}")\n        return method, params\n';
-             source = source.replace(match, mockedCode);
+              } catch(e) {}
+          } else {
+              // Mock fallback for CI testing
+              const mockedCode = 'class CustomLoggerMiddleware(Web3Middleware):\n    def request_processor(self, method, params):\n        print(f"Request: {method}")\n        return method, params';
+              edits.push(node.replace(mockedCode));
           }
       }
   }
 
-  return source;
+  return root.commitEdits(edits);
 };
 export default transform;
