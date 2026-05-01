@@ -1,0 +1,7 @@
+name: Web3.py v6 to v7 Migration
+description: Migrate Web3.py projects from v6 to v7, handling providers, namespaces, and middleware.
+jobs:
+  migrate:
+    steps:
+      - name: Run JSSG Transform
+        run: npx codemod web3py-v6-to-v7

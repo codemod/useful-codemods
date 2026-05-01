@@ -1,0 +1,12 @@
+schemaVersion: 1.0.0
+name: web3py-v6-to-v7
+engine: jssg
+description: Deterministic Web3.py v6 -> v7 migration with an isolated NVIDIA NIM AI fallback for complex middleware class refactoring.
+tags:
+  - web3py
+  - python
+  - migration
+  - boring-ai
+build:
+  input: ./scripts/codemod.ts
+  output: ./dist/index.cjs
