@@ -74,73 +74,93 @@ export const transform: Transform<Python> = async (rootWrapper) => {
   }
 
   // 5. AI EDGE-CASE LAYER: Custom Middleware Refactoring
-  // To avoid Python regex parser limits on multiline, we query the exact 'function_definition' AST nodes.
   const functions = root.findAll({ rule: { kind: 'function_definition' } });
-  
   const apiKey = typeof process !== 'undefined' ? process?.env?.NVIDIA_NIM_API_KEY : undefined;
 
   for (const node of functions) {
       const funcText = node.text();
-      // Identify custom middleware structurally: takes (make_request, w3)
+      
       if (funcText.includes('(make_request, w3):') && !funcText.includes('Web3Middleware')) {
           
-          // Context Injection: Extract the exact function name so the LLM doesn't hallucinate it
+          // Context Injection: Extract the exact function name safely (avoids decorators)
           // @ts-ignore
-          const nameNode = node.find({ rule: { kind: 'identifier' } });
-          const funcName = nameNode ? nameNode.text() : 'CustomMiddleware';
+          const nameNode = node.field('name');
+          let funcName = nameNode ? nameNode.text() : 'CustomMiddleware';
+          
+          // Formatting safety: Track base indentation to preserve Python AST integrity
+          // @ts-ignore
+          const baseIndentation = node.range ? " ".repeat(node.range().start.column) : "";
 
           if (apiKey) {
-              try {
-                  const response = await fetch("https://integrate.api.nvidia.com/v1/chat/completions", {
-                      method: "POST",
-                      headers: { "Content-Type": "application/json", "Authorization": `Bearer ${apiKey}` },
-                      body: JSON.stringify({
-                          model: "meta/llama3-70b-instruct",
-                          messages: [{
-                              role: "system",
-                              content: `You are a precise Python refactoring tool. Convert the provided web3.py v6 function-based middleware into a v7 class-based Web3Middleware. 
-                              CRITICAL CONSTRAINTS:
-                              1. The new class MUST be named using PascalCase version of '${funcName}'.
-                              2. Inherit from 'Web3Middleware'.
-                              3. Implement 'request_processor(self, method, params)' or 'response_processor'.
-                              4. OUTPUT ONLY THE RAW PYTHON CODE. Do not include markdown formatting, backticks, or conversational filler.`
-                          }, { role: "user", content: funcText }],
-                          temperature: 0
-                      })
-                  });
+              let success = false;
+              let retries = 0;
+              const maxRetries = 3;
 
-                  if (!response.ok) {
-                      console.warn(`[AI-Fallback] NVIDIA NIM API failed with status ${response.status}`);
-                      continue;
-                  }
+              while (!success && retries < maxRetries) {
+                  try {
+                      const response = await fetch("https://integrate.api.nvidia.com/v1/chat/completions", {
+                          method: "POST",
+                          headers: { "Content-Type": "application/json", "Authorization": `Bearer ${apiKey}` },
+                          body: JSON.stringify({
+                              model: "meta/llama3-70b-instruct",
+                              messages: [{
+                                  role: "system",
+                                  content: `You are a precise Python refactoring tool. Convert the provided web3.py v6 function-based middleware into a v7 class-based Web3Middleware. 
+                                  CRITICAL CONSTRAINTS:
+                                  1. The new class MUST be named using PascalCase version of '${funcName}'.
+                                  2. Inherit from 'Web3Middleware'.
+                                  3. Implement 'request_processor(self, method, params)' or 'response_processor'.
+                                  4. OUTPUT ONLY THE RAW PYTHON CODE. Do not include markdown formatting, backticks, or conversational filler.`
+                              }, { role: "user", content: funcText }],
+                              temperature: 0
+                          })
+                      });
 
-                  const data = await response.json();
-                  if (data.choices && data.choices[0]) {
-                      const rawOutput = data.choices[0].message.content;
-                      
-                      // Defensively extract Python code even if the LLM wrapped it in markdown
-                      let migratedCode = rawOutput;
-                      const codeBlockMatch = rawOutput.match(/```(?:python)?\n([\s\S]*?)```/);
-                      if (codeBlockMatch && codeBlockMatch[1]) {
-                          migratedCode = codeBlockMatch[1].trim();
-                      } else {
-                          migratedCode = migratedCode.trim();
+                      if (response.status === 429 || response.status >= 500) {
+                          retries++;
+                          console.warn(`[AI-Fallback] Rate limited or server error (${response.status}). Retrying ${retries}/${maxRetries}...`);
+                          await new Promise(r => setTimeout(r, 1000 * Math.pow(2, retries)));
+                          continue;
                       }
-                      
-                      // Flexible Validation: Ensure it contains 'class' anywhere, not just at index 0 (handles decorators/docstrings)
-                      if (migratedCode.includes("class ")) {
-                          edits.push(node.replace(migratedCode));
-                          console.log(`[AI-Fallback] Successfully refactored '${funcName}' to v7 class.`);
-                      } else {
-                          console.warn(`[AI-Fallback] LLM returned invalid format for '${funcName}', skipping...`);
+
+                      if (!response.ok) {
+                          console.warn(`[AI-Fallback] NVIDIA NIM API failed with status ${response.status}`);
+                          break;
                       }
+
+                      const data = await response.json();
+                      if (data.choices && data.choices[0]) {
+                          const rawOutput = data.choices[0].message.content;
+                          
+                          let migratedCode = rawOutput;
+                          const codeBlockMatch = rawOutput.match(/```(?:python)?\n([\s\S]*?)```/);
+                          if (codeBlockMatch && codeBlockMatch[1]) {
+                              migratedCode = codeBlockMatch[1].trim();
+                          } else {
+                              migratedCode = migratedCode.trim();
+                          }
+                          
+                          if (migratedCode.includes("class ")) {
+                              // Re-apply original indentation to all lines except the first (which AST node.replace handles)
+                              const indentedCode = migratedCode.split('\n').map((line, idx) => idx === 0 ? line : baseIndentation + line).join('\n');
+                              edits.push(node.replace(indentedCode));
+                              console.log(`[AI-Fallback] Successfully refactored '${funcName}' to v7 class.`);
+                              success = true;
+                          } else {
+                              console.warn(`[AI-Fallback] LLM returned invalid format for '${funcName}', skipping...`);
+                              break;
+                          }
+                      }
+                  } catch(e) {
+                      console.warn(`[AI-Fallback] Exception during AI network call:`, e);
+                      retries++;
+                      await new Promise(r => setTimeout(r, 1000 * Math.pow(2, retries)));
                   }
-              } catch(e) {
-                  console.warn(`[AI-Fallback] Exception during AI network call:`, e);
               }
           } else {
-              // Mock fallback for CI testing
-              const mockedCode = `class CustomLoggerMiddleware(Web3Middleware):\n    def request_processor(self, method, params):\n        print(f"Request: {method}")\n        return method, params`;
+              // Dynamic Mock fallback for CI testing to prevent namespace collisions
+              const pascalName = funcName.split('_').map(word => word.charAt(0).toUpperCase() + word.slice(1)).join('');
+              const mockedCode = `class ${pascalName}(Web3Middleware):\n${baseIndentation}    def request_processor(self, method, params):\n${baseIndentation}        print(f"Request: {method}")\n${baseIndentation}        return method, params`;
               edits.push(node.replace(mockedCode));
           }
       }
