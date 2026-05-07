@@ -1,5 +1,11 @@
 # debarrel
 
+## 0.7.1
+
+### Patch Changes
+
+- 38aa0e7: Fix debarreling codemod's issue with alias imports
+
 ## 0.7.0
 
 ### Minor Changes
