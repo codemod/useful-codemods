@@ -7,6 +7,7 @@ import {
   hasPackageJson,
   isBarrelFile,
   isInsideNodeModules,
+  isPackageEntrypoint,
 } from "./utils/paths.ts";
 import { isPureBarrel } from "./utils/barrel.ts";
 import { resolveSpecifier, type SpecRewrite } from "./utils/specifiers.ts";
@@ -136,12 +137,12 @@ const codemod: Codemod<Language> = async (root, options) => {
   rewriteMockCalls(rootNode, barrelRewrites, edits);
 
   // Barrel rename — skip files inside node_modules or inside a package
-  // (renaming a package entry point would break consumers importing via
-  // the package name).
+  // when the barrel is an actual package entrypoint (renaming it would break
+  // consumers importing via the package name).
   if (
     isBarrelFile(filename) &&
     !isInsideNodeModules(filename) &&
-    !hasPackageJson(filename)
+    (!hasPackageJson(filename) || !isPackageEntrypoint(filename))
   ) {
     const { pure, hasWildcards } = isPureBarrel(rootNode);
     if (pure && !hasWildcards) {
