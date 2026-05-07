@@ -2,13 +2,23 @@ import type { SgNode, SgRoot } from "codemod:ast-grep";
 import type { Language } from "./language.ts";
 import { getStringContent } from "./ast.ts";
 import {
-  hasPackageJson,
+  getPackageName,
   isBarrelFile,
   isInsideNodeModules,
   isLocalRelativePath,
   joinImportPaths,
 } from "./paths.ts";
 import { parseBarrelExport } from "./barrel.ts";
+
+function getImportPackageName(importPath: string): string | null {
+  if (importPath.startsWith("@")) {
+    const segments = importPath.split("/");
+    return segments.length >= 2 ? `${segments[0]}/${segments[1]}` : null;
+  }
+
+  const [packageName] = importPath.split("/");
+  return packageName || null;
+}
 
 export interface SpecRewrite {
   consumerName: string;
@@ -34,12 +44,16 @@ export function resolveSpecifier(
   // package.json "exports" that would break if we change the import subpath.
   if (isInsideNodeModules(def.root.filename())) return null;
 
-  // For non-relative imports (package names, aliases), skip if the resolved
-  // file lives inside a package (has a package.json ancestor). The package's
-  // "exports" field controls valid subpaths — rewriting the import could
-  // produce a path that isn't exported (e.g. @acme/validators → @acme/validators/foo).
-  if (!isLocalRelativePath(importPath) && hasPackageJson(def.root.filename())) {
-    return null;
+  // For non-relative imports, only preserve the package boundary when the
+  // resolved file belongs to the same named package as the import specifier.
+  // This keeps tsconfig aliases like `~/foo` or `@acme/pkg/*` rewriteable
+  // even when the surrounding repo has an unrelated package.json.
+  if (!isLocalRelativePath(importPath)) {
+    const packageName = getPackageName(def.root.filename());
+    const importPackage = getImportPackageName(importPath);
+    if (packageName && importPackage === packageName) {
+      return null;
+    }
   }
 
   if (isBarrelFile(def.root.filename())) {
