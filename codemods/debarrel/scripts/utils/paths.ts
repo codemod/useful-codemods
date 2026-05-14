@@ -54,6 +54,34 @@ export function isBarrelFile(filename: string): boolean {
   return /^index\.(ts|tsx|js|jsx)$/.test(path.basename(filename));
 }
 
+const MODULE_EXTENSIONS = [".ts", ".tsx", ".js", ".jsx"] as const;
+
+/**
+ * Resolve a relative import path to the absolute file it points to on disk,
+ * mirroring Node/TS module resolution preferences:
+ *   1. `<resolved>.<ext>`            (file form — preferred when both exist)
+ *   2. `<resolved>/index.<ext>`      (directory's index form)
+ *
+ * Returns null when the import path isn't relative or no candidate exists.
+ */
+export function resolveImportPath(
+  importerFilename: string,
+  importPath: string,
+): string | null {
+  if (!isLocalRelativePath(importPath)) return null;
+  const importerDir = path.dirname(importerFilename);
+  const resolved = path.resolve(importerDir, importPath);
+  for (const ext of MODULE_EXTENSIONS) {
+    const candidate = resolved + ext;
+    if (fileExists(candidate)) return candidate;
+  }
+  for (const ext of MODULE_EXTENSIONS) {
+    const candidate = path.join(resolved, `index${ext}`);
+    if (fileExists(candidate)) return candidate;
+  }
+  return null;
+}
+
 export function isInsideNodeModules(filename: string): boolean {
   return (
     filename.includes("/node_modules/") || filename.includes("\\node_modules\\")
