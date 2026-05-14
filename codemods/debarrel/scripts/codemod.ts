@@ -41,6 +41,12 @@ const codemod: Codemod<Language> = async (root, options) => {
       .find((c) => c.is("import_clause"));
     if (!importClause) continue;
 
+    // Top-level `import type { … } from "…"` — preserved across rewrites so
+    // we don't downgrade a type-only import to a value import (which can
+    // break under --verbatimModuleSyntax / --isolatedModules when the
+    // resolved declarations are `export type` aliases).
+    const isTypeOnlyImport = /^\s*import\s+type\b/.test(importStmt.text());
+
     const rewrites: SpecRewrite[] = [];
     let totalSpecifiers = 0;
 
@@ -59,7 +65,13 @@ const codemod: Codemod<Language> = async (root, options) => {
         if (!localBinding) continue;
         const def = localBinding.definition();
         if (!def) continue;
-        const rw = resolveSpecifier(localBinding, importPath, def);
+        const rw = resolveSpecifier(
+          localBinding,
+          importPath,
+          def,
+          filename,
+          relativeFilename,
+        );
         if (rw) rewrites.push(rw);
       }
     }
@@ -75,7 +87,13 @@ const codemod: Codemod<Language> = async (root, options) => {
       totalSpecifiers += 1;
       const def = defaultIdent.definition();
       if (def) {
-        const rw = resolveSpecifier(defaultIdent, importPath, def);
+        const rw = resolveSpecifier(
+          defaultIdent,
+          importPath,
+          def,
+          filename,
+          relativeFilename,
+        );
         if (rw) rewrites.push(rw);
       }
     }
@@ -100,7 +118,7 @@ const codemod: Codemod<Language> = async (root, options) => {
       // when the barrel import is the last/only import in the file.
       const lines: string[] = [];
       for (const [sourcePath, specs] of byPath) {
-        lines.push(buildImportText(sourcePath, specs, quoteChar));
+        lines.push(buildImportText(sourcePath, specs, quoteChar, isTypeOnlyImport));
       }
       edits.push(importStmt.replace(lines.join("\n")));
     } else {
@@ -123,12 +141,13 @@ const codemod: Codemod<Language> = async (root, options) => {
       }
       const lines: string[] = [];
       if (remainingSpecTexts.length > 0) {
+        const typeKeyword = isTypeOnlyImport ? "type " : "";
         lines.push(
-          `import { ${remainingSpecTexts.join(", ")} } from ${quoteChar}${importPath}${quoteChar};`,
+          `import ${typeKeyword}{ ${remainingSpecTexts.join(", ")} } from ${quoteChar}${importPath}${quoteChar};`,
         );
       }
       for (const [sourcePath, specs] of byPath) {
-        lines.push(buildImportText(sourcePath, specs, quoteChar));
+        lines.push(buildImportText(sourcePath, specs, quoteChar, isTypeOnlyImport));
       }
       edits.push(importStmt.replace(lines.join("\n")));
     }
