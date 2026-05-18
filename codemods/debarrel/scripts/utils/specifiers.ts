@@ -1,4 +1,5 @@
 import type { SgNode, SgRoot } from "codemod:ast-grep";
+import path from "path";
 import type { Language } from "./language.ts";
 import { getStringContent } from "./ast.ts";
 import {
@@ -7,8 +8,10 @@ import {
   isInsideNodeModules,
   isLocalRelativePath,
   joinImportPaths,
+  resolveImportPath,
 } from "./paths.ts";
 import { parseBarrelExport } from "./barrel.ts";
+import { findSymbolViaExportStar } from "./exportStar.ts";
 
 function getImportPackageName(importPath: string): string | null {
   if (importPath.startsWith("@")) {
@@ -36,8 +39,23 @@ export function resolveSpecifier(
   localBinding: SgNode<Language>,
   importPath: string,
   def: { kind: string; root: SgRoot<Language>; node: SgNode<Language> },
+  importerFilename: string,
+  importerRelativeFilename: string,
 ): SpecRewrite | null {
-  if (def.kind !== "external") return null;
+  // When the semantic analyzer fully resolves the binding to a different
+  // file we go through the `external` branches below. When it punts (most
+  // commonly because the symbol flows through a bare `export *` re-export
+  // that the analyzer can't enumerate statically), `def.kind` is "import"
+  // and `def.root.filename()` is the importer itself — skip the
+  // external-only checks and head straight to the manual export-star walker.
+  if (def.kind !== "external") {
+    return resolveViaExportStarWalk(
+      localBinding,
+      importPath,
+      importerFilename,
+      importerRelativeFilename,
+    );
+  }
 
   // Never rewrite imports that resolve into node_modules — those are
   // third-party or published workspace packages with potentially restricted
@@ -93,9 +111,70 @@ export function resolveSpecifier(
   }
 
   // Semantic analyzer resolved all the way through to the actual source file
-  // (not a barrel). Only rewrite if the import actually went through a barrel
-  // that we can bypass. If the resolved file is already the direct target of
+  // (not a barrel). If the resolved file is already the direct target of
   // the import (e.g. @acme/api/models/utils/ratelimiter → ratelimiter.ts),
   // the import is already correct — don't rewrite.
   return null;
+}
+
+/**
+ * Walk the barrel pointed to by `importPath` and look for which file in its
+ * `export * from "./y"` chain declares `localBinding`'s name. Used when the
+ * semantic analyzer can't tell us — bare `export *` re-exports don't carry
+ * named bindings the analyzer can chase.
+ */
+function resolveViaExportStarWalk(
+  localBinding: SgNode<Language>,
+  importPath: string,
+  importerFilename: string,
+  importerRelativeFilename: string,
+): SpecRewrite | null {
+  if (!isLocalRelativePath(importPath)) return null;
+  const barrelFile = resolveImportPath(importerFilename, importPath);
+  if (!barrelFile || !isBarrelFile(barrelFile)) return null;
+
+  const targetFile = findSymbolViaExportStar(barrelFile, localBinding.text());
+  if (!targetFile || targetFile === barrelFile) return null;
+
+  const barrelDir = path.dirname(barrelFile);
+  let rel = path.relative(barrelDir, targetFile);
+  const ext = path.extname(rel);
+  if (ext) rel = rel.slice(0, -ext.length);
+  rel = rel.replace(/\/index$/, "") || ".";
+  const fromBarrel = rel.startsWith(".") ? rel : `./${rel}`;
+
+  // Mirror the barrel's workspace-relative path for the metric, so the
+  // `filePath` cardinality matches the named-reexport branches above.
+  const barrelRelativeFilename = toWorkspaceRelative(
+    importerFilename,
+    importerRelativeFilename,
+    barrelFile,
+  );
+
+  return {
+    consumerName: localBinding.text(),
+    newImportPath: joinImportPaths(importPath, fromBarrel),
+    localName: localBinding.text(),
+    importType: "named",
+    resolvedFilePath: barrelRelativeFilename,
+  };
+}
+
+/**
+ * Convert an absolute path inside the workspace back into a workspace-relative
+ * path, using the importer's own absolute+relative pair to derive the
+ * workspace root. Falls back to the absolute path if the root can't be
+ * inferred (importerFilename doesn't end with importerRelativeFilename).
+ */
+function toWorkspaceRelative(
+  importerFilename: string,
+  importerRelativeFilename: string,
+  absolutePath: string,
+): string {
+  if (!importerFilename.endsWith(importerRelativeFilename)) return absolutePath;
+  const workspaceRoot = importerFilename.slice(
+    0,
+    importerFilename.length - importerRelativeFilename.length,
+  );
+  return path.relative(workspaceRoot, absolutePath).replace(/\\/g, "/");
 }

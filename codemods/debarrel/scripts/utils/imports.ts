@@ -7,6 +7,7 @@ export function buildImportText(
   sourcePath: string,
   specs: SpecRewrite[],
   quoteChar: string,
+  typeOnly = false,
 ): string {
   const parts: string[] = [];
   const defaultSpec = specs.find((s) => s.importType === "default");
@@ -23,7 +24,8 @@ export function buildImportText(
     );
     parts.push(`{ ${specTexts.join(", ")} }`);
   }
-  return `import ${parts.join(", ")} from ${quoteChar}${sourcePath}${quoteChar};`;
+  const typeKeyword = typeOnly ? "type " : "";
+  return `import ${typeKeyword}${parts.join(", ")} from ${quoteChar}${sourcePath}${quoteChar};`;
 }
 
 export function groupByPath(
