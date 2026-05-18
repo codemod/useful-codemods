@@ -118,39 +118,6 @@ export function resolveSpecifier(
 }
 
 /**
- * Compute the workspace-relative path of a barrel `index.<ext>` from an
- * importer's relative filename and the import specifier that points at it.
- * Hand-rolled because the runtime exposes only a partial `path` polyfill
- * (no `path.posix`).
- */
-function barrelToRelativeFilename(
-  importerRelativeFilename: string,
-  importPath: string,
-  barrelExt: string,
-): string {
-  const importerDir = importerRelativeFilename
-    .replace(/\\/g, "/")
-    .split("/")
-    .slice(0, -1);
-  const joined = importerDir.concat(importPath.replace(/\\/g, "/").split("/"));
-  const resolved: string[] = [];
-  for (const seg of joined) {
-    if (seg === "" || seg === ".") continue;
-    if (seg === ".." && resolved.length > 0 && resolved[resolved.length - 1] !== "..") {
-      resolved.pop();
-    } else {
-      resolved.push(seg);
-    }
-  }
-  if (resolved.length > 0 && resolved[resolved.length - 1] === "index") {
-    resolved.pop();
-  }
-  return resolved.length === 0
-    ? `index${barrelExt}`
-    : `${resolved.join("/")}/index${barrelExt}`;
-}
-
-/**
  * Walk the barrel pointed to by `importPath` and look for which file in its
  * `export * from "./y"` chain declares `localBinding`'s name. Used when the
  * semantic analyzer can't tell us — bare `export *` re-exports don't carry
@@ -167,8 +134,7 @@ function resolveViaExportStarWalk(
   if (!barrelFile || !isBarrelFile(barrelFile)) return null;
 
   const targetFile = findSymbolViaExportStar(barrelFile, localBinding.text());
-  if (!targetFile) return null;
-  if (targetFile === barrelFile) return null;
+  if (!targetFile || targetFile === barrelFile) return null;
 
   const barrelDir = path.dirname(barrelFile);
   let rel = path.relative(barrelDir, targetFile);
@@ -179,11 +145,10 @@ function resolveViaExportStarWalk(
 
   // Mirror the barrel's workspace-relative path for the metric, so the
   // `filePath` cardinality matches the named-reexport branches above.
-  const barrelExt = path.extname(barrelFile);
-  const barrelRelativeFilename = barrelToRelativeFilename(
+  const barrelRelativeFilename = toWorkspaceRelative(
+    importerFilename,
     importerRelativeFilename,
-    importPath,
-    barrelExt,
+    barrelFile,
   );
 
   return {
@@ -193,4 +158,23 @@ function resolveViaExportStarWalk(
     importType: "named",
     resolvedFilePath: barrelRelativeFilename,
   };
+}
+
+/**
+ * Convert an absolute path inside the workspace back into a workspace-relative
+ * path, using the importer's own absolute+relative pair to derive the
+ * workspace root. Falls back to the absolute path if the root can't be
+ * inferred (importerFilename doesn't end with importerRelativeFilename).
+ */
+function toWorkspaceRelative(
+  importerFilename: string,
+  importerRelativeFilename: string,
+  absolutePath: string,
+): string {
+  if (!importerFilename.endsWith(importerRelativeFilename)) return absolutePath;
+  const workspaceRoot = importerFilename.slice(
+    0,
+    importerFilename.length - importerRelativeFilename.length,
+  );
+  return path.relative(workspaceRoot, absolutePath).replace(/\\/g, "/");
 }

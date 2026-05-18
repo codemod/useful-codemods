@@ -45,7 +45,7 @@ const codemod: Codemod<Language> = async (root, options) => {
     // we don't downgrade a type-only import to a value import (which can
     // break under --verbatimModuleSyntax / --isolatedModules when the
     // resolved declarations are `export type` aliases).
-    const isTypeOnlyImport = /^\s*import\s+type\b/.test(importStmt.text());
+    const isTypeOnlyImport = importStmt.children().some((c) => c.is("type"));
 
     const rewrites: SpecRewrite[] = [];
     let totalSpecifiers = 0;
