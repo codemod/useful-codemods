@@ -61,37 +61,100 @@ export function isPureBarrel(rootNode: SgNode<Language>): {
   pure: boolean;
   hasWildcards: boolean;
 } {
+  const importedBindings = collectLocalImportBindings(rootNode);
+  let hasReExports = false;
   let hasWildcards = false;
-  let hasOwnDeclarations = false;
 
   for (const child of rootNode.children()) {
     if (child.is("import_statement")) continue;
     if (child.is("export_statement")) {
       const stmtChildren = child.children();
-      const hasSource = stmtChildren.some((c) => c.is("string"));
+      const sourceNode = stmtChildren.find((c) => c.is("string"));
+      const source = sourceNode ? getStringContent(sourceNode) : null;
       const hasExportClause = stmtChildren.some((c) => c.is("export_clause"));
       const hasNamespaceExport = stmtChildren.some((c) =>
         c.is("namespace_export"),
       );
-      const hasDeclaration = stmtChildren.some(
-        (c) =>
-          c.is("lexical_declaration") ||
-          c.is("function_declaration") ||
-          c.is("class_declaration") ||
-          c.is("type_alias_declaration") ||
-          c.is("interface_declaration"),
-      );
-      if (hasDeclaration) {
-        hasOwnDeclarations = true;
-      } else if (hasSource && (!hasExportClause || hasNamespaceExport)) {
-        hasWildcards = true;
+
+      if (!source) {
+        if (
+          !hasExportClause ||
+          !exportsOnlyImportedBindings(child, importedBindings)
+        ) {
+          return { pure: false, hasWildcards };
+        }
+
+        hasReExports = true;
+        continue;
       }
+
+      if (!isLocalRelativePath(source)) {
+        return { pure: false, hasWildcards };
+      }
+
+      hasReExports = true;
+      if (!hasExportClause || hasNamespaceExport) hasWildcards = true;
       continue;
     }
-    if (child.isNamed()) {
-      hasOwnDeclarations = true;
+    if (child.isNamed()) return { pure: false, hasWildcards };
+  }
+
+  return { pure: hasReExports, hasWildcards };
+}
+
+function collectLocalImportBindings(rootNode: SgNode<Language>): Set<string> {
+  const bindings = new Set<string>();
+
+  for (const importStmt of rootNode.findAll({
+    rule: { kind: "import_statement" },
+  })) {
+    const sourceNode = importStmt.children().find((c) => c.is("string"));
+    const source = sourceNode ? getStringContent(sourceNode) : null;
+    if (!source || !isLocalRelativePath(source)) continue;
+
+    const importClause = importStmt
+      .children()
+      .find((c) => c.is("import_clause"));
+    if (!importClause) continue;
+
+    for (const specifier of importClause.findAll({
+      rule: { kind: "import_specifier" },
+    })) {
+      const identifiers = specifier.findAll({ rule: { kind: "identifier" } });
+      const localName = identifiers[identifiers.length - 1]?.text();
+      if (localName) bindings.add(localName);
+    }
+
+    for (const namespaceImport of importClause.findAll({
+      rule: { kind: "namespace_import" },
+    })) {
+      const identifiers = namespaceImport.findAll({
+        rule: { kind: "identifier" },
+      });
+      const localName = identifiers[identifiers.length - 1]?.text();
+      if (localName) bindings.add(localName);
+    }
+
+    for (const child of importClause.children()) {
+      if (child.is("identifier")) bindings.add(child.text());
     }
   }
 
-  return { pure: !hasOwnDeclarations, hasWildcards };
+  return bindings;
+}
+
+function exportsOnlyImportedBindings(
+  exportStmt: SgNode<Language>,
+  importedBindings: Set<string>,
+): boolean {
+  const specifiers = exportStmt.findAll({
+    rule: { kind: "export_specifier" },
+  });
+  if (specifiers.length === 0) return false;
+
+  return specifiers.every((specifier) => {
+    const identifiers = specifier.findAll({ rule: { kind: "identifier" } });
+    const localName = identifiers[0]?.text();
+    return Boolean(localName && importedBindings.has(localName));
+  });
 }
