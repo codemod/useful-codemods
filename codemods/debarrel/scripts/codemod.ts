@@ -7,6 +7,7 @@ import {
   hasPackageJson,
   isBarrelFile,
   isInsideNodeModules,
+  isNextPagesApiRoute,
   isPackageEntrypoint,
 } from "./utils/paths.ts";
 import { isPureBarrel } from "./utils/barrel.ts";
@@ -161,6 +162,7 @@ const codemod: Codemod<Language> = async (root, options) => {
   if (
     isBarrelFile(filename) &&
     !isInsideNodeModules(filename) &&
+    !isNextPagesApiRoute(filename) &&
     (!hasPackageJson(filename) || !isPackageEntrypoint(filename))
   ) {
     const { pure, hasWildcards } = isPureBarrel(rootNode);

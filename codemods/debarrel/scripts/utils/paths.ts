@@ -54,6 +54,13 @@ export function isBarrelFile(filename: string): boolean {
   return /^index\.(ts|tsx|js|jsx)$/.test(path.basename(filename));
 }
 
+export function isNextPagesApiRoute(filename: string): boolean {
+  const normalized = filename.replace(/\\/g, "/");
+  return /(^|\/)pages\/api(?:\/.*)?\/index\.(ts|tsx|js|jsx)$/.test(
+    normalized,
+  );
+}
+
 const MODULE_EXTENSIONS = [".ts", ".tsx", ".js", ".jsx"] as const;
 
 /**
