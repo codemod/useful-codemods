@@ -1,4 +1,4 @@
-import type { Codemod, Edit, GetSelector } from "codemod:ast-grep";
+import type { Codemod, Edit, GetSelector, SgNode } from "codemod:ast-grep";
 import { useMetricAtom } from "codemod:metrics";
 import path from "path";
 import type { Language } from "./utils/language.ts";
