@@ -1,5 +1,11 @@
 # debarrel
 
+## 0.7.5
+
+### Patch Changes
+
+- Rewrite default imports that flow through `export { Foo as default }` barrel re-exports when the semantic analyzer cannot resolve the binding. Also walk explicit `export { … } from` re-exports before falling back to `export *` chains, and preserve inline `import { type Foo }` specifiers when splitting partial barrel imports.
+
 ## 0.7.4
 
 ### Patch Changes

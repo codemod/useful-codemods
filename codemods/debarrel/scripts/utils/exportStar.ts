@@ -3,6 +3,7 @@ import path from "path";
 import { parse, type SgNode, type SgRoot } from "codemod:ast-grep";
 import type { Language } from "./language.ts";
 import { getStringContent } from "./ast.ts";
+import { parseBarrelExport } from "./barrel.ts";
 import { isLocalRelativePath, resolveImportPath } from "./paths.ts";
 
 // The semantic analyzer's `definition()` does not chase through bare
@@ -136,6 +137,43 @@ export function findSymbolViaExportStar(
   name: string,
 ): string | null {
   return walk(barrelFile, name, new Set(), 0);
+}
+
+export interface BarrelReexportMatch {
+  targetFile: string;
+  localName: string;
+  importType: "default" | "named";
+}
+
+/**
+ * Walk `barrelFile`'s explicit `export { … } from "./y"` re-exports to find
+ * which file provides `name` for a consumer import. Used when the semantic
+ * analyzer can't resolve the binding (e.g. default imports through
+ * `export { Foo as default }` re-exports).
+ */
+export function findSymbolViaBarrelReexports(
+  barrelFile: string,
+  consumerName: string,
+  isDefaultImport: boolean,
+): BarrelReexportMatch | null {
+  const root = parseFile(barrelFile);
+  if (!root) return null;
+
+  for (const stmt of root.root().children()) {
+    if (!stmt.is("export_statement")) continue;
+    // Namespace re-exports (`export * as Ns from "./y"`) are not debarreled here.
+    if (stmt.children().some((c) => c.is("namespace_export"))) continue;
+    const info = parseBarrelExport(stmt, consumerName, { isDefaultImport });
+    if (!info) continue;
+    const targetFile = resolveImportPath(barrelFile, info.sourceFromBarrel);
+    if (!targetFile) continue;
+    return {
+      targetFile,
+      localName: info.localName,
+      importType: info.importType,
+    };
+  }
+  return null;
 }
 
 function walk(

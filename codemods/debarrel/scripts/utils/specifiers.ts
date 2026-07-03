@@ -11,7 +11,7 @@ import {
   resolveModuleImportPath,
 } from "./paths.ts";
 import { parseBarrelExport } from "./barrel.ts";
-import { findSymbolViaExportStar } from "./exportStar.ts";
+import { findSymbolViaBarrelReexports, findSymbolViaExportStar } from "./exportStar.ts";
 
 function getImportPackageName(importPath: string): string | null {
   if (importPath.startsWith("@")) {
@@ -41,6 +41,7 @@ export interface SpecRewrite {
   localName: string;
   importType: "default" | "named" | "namespace";
   resolvedFilePath: string;
+  typeOnly?: boolean;
 }
 
 /**
@@ -53,19 +54,21 @@ export function resolveSpecifier(
   def: { kind: string; root: SgRoot<Language>; node: SgNode<Language> },
   importerFilename: string,
   importerRelativeFilename: string,
+  isDefaultImport = false,
 ): SpecRewrite | null {
   // When the semantic analyzer fully resolves the binding to a different
   // file we go through the `external` branches below. When it punts (most
   // commonly because the symbol flows through a bare `export *` re-export
   // that the analyzer can't enumerate statically), `def.kind` is "import"
   // and `def.root.filename()` is the importer itself — skip the
-  // external-only checks and head straight to the manual export-star walker.
+  // external-only checks and head straight to the manual barrel walkers.
   if (def.kind !== "external") {
-    return resolveViaExportStarWalk(
+    return resolveViaBarrelWalk(
       localBinding,
       importPath,
       importerFilename,
       importerRelativeFilename,
+      isDefaultImport,
     );
   }
 
@@ -93,7 +96,9 @@ export function resolveSpecifier(
   if (isBarrelFile(def.root.filename())) {
     // Definition landed on an export_statement in the barrel
     if (def.node.is("export_statement")) {
-      const info = parseBarrelExport(def.node, localBinding.text());
+      const info = parseBarrelExport(def.node, localBinding.text(), {
+        isDefaultImport,
+      });
       if (!info) return null;
       return {
         consumerName: localBinding.text(),
@@ -154,23 +159,63 @@ export function resolveSpecifier(
 }
 
 /**
- * Walk the barrel pointed to by `importPath` and look for which file in its
- * `export * from "./y"` chain declares `localBinding`'s name. Used when the
- * semantic analyzer can't tell us — bare `export *` re-exports don't carry
- * named bindings the analyzer can chase.
+ * Walk the barrel pointed to by `importPath` when the semantic analyzer
+ * can't resolve the binding. Tries explicit re-exports first, then bare
+ * `export *` chains.
  */
-function resolveViaExportStarWalk(
+function resolveViaBarrelWalk(
   localBinding: SgNode<Language>,
   importPath: string,
   importerFilename: string,
   importerRelativeFilename: string,
+  isDefaultImport: boolean,
 ): SpecRewrite | null {
   const barrelFile = resolveModuleImportPath(importerFilename, importPath);
   if (!barrelFile || !isBarrelFile(barrelFile)) return null;
 
+  const reexport = findSymbolViaBarrelReexports(
+    barrelFile,
+    localBinding.text(),
+    isDefaultImport,
+  );
+  if (reexport) {
+    return buildRewriteFromTarget(
+      localBinding.text(),
+      importPath,
+      barrelFile,
+      reexport.targetFile,
+      importerFilename,
+      importerRelativeFilename,
+      reexport.localName,
+      reexport.importType,
+    );
+  }
+
   const targetFile = findSymbolViaExportStar(barrelFile, localBinding.text());
   if (!targetFile || targetFile === barrelFile) return null;
 
+  return buildRewriteFromTarget(
+    localBinding.text(),
+    importPath,
+    barrelFile,
+    targetFile,
+    importerFilename,
+    importerRelativeFilename,
+    localBinding.text(),
+    "named",
+  );
+}
+
+function buildRewriteFromTarget(
+  consumerName: string,
+  importPath: string,
+  barrelFile: string,
+  targetFile: string,
+  importerFilename: string,
+  importerRelativeFilename: string,
+  localName: string,
+  importType: "default" | "named",
+): SpecRewrite {
   const barrelDir = path.dirname(barrelFile);
   let rel = path.relative(barrelDir, targetFile);
   const ext = path.extname(rel);
@@ -178,8 +223,6 @@ function resolveViaExportStarWalk(
   rel = rel.replace(/\/index$/, "") || ".";
   const fromBarrel = rel.startsWith(".") ? rel : `./${rel}`;
 
-  // Mirror the barrel's workspace-relative path for the metric, so the
-  // `filePath` cardinality matches the named-reexport branches above.
   const barrelRelativeFilename = toWorkspaceRelative(
     importerFilename,
     importerRelativeFilename,
@@ -187,10 +230,10 @@ function resolveViaExportStarWalk(
   );
 
   return {
-    consumerName: localBinding.text(),
+    consumerName,
     newImportPath: joinImportPaths(importPath, fromBarrel),
-    localName: localBinding.text(),
-    importType: "named",
+    localName,
+    importType,
     resolvedFilePath: barrelRelativeFilename,
   };
 }

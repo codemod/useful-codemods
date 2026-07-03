@@ -1,5 +1,5 @@
 import { VERSION } from "./lib";
-import { Config } from "./lib/config";
+import type { Config } from "./lib/config";
 import { helper } from "./lib/helper";
 
 const x: Config = { debug: true };

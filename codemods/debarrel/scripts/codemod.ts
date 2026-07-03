@@ -48,6 +48,9 @@ const codemod: Codemod<Language> = async (root, options) => {
     // resolved declarations are `export type` aliases).
     const isTypeOnlyImport = importStmt.children().some((c) => c.is("type"));
 
+    const isTypeOnlySpecifier = (spec: SgNode<Language>) =>
+      spec.children().some((c) => c.is("type"));
+
     const rewrites: SpecRewrite[] = [];
     let totalSpecifiers = 0;
 
@@ -72,8 +75,14 @@ const codemod: Codemod<Language> = async (root, options) => {
           def,
           filename,
           relativeFilename,
+          false,
         );
-        if (rw) rewrites.push(rw);
+        if (rw) {
+          if (isTypeOnlyImport || isTypeOnlySpecifier(spec)) {
+            rw.typeOnly = true;
+          }
+          rewrites.push(rw);
+        }
       }
     }
 
@@ -94,6 +103,7 @@ const codemod: Codemod<Language> = async (root, options) => {
           def,
           filename,
           relativeFilename,
+          true,
         );
         if (rw) rewrites.push(rw);
       }
