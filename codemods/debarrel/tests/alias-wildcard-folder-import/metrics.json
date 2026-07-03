@@ -1,0 +1,18 @@
+{
+  "barrel_import": [
+    {
+      "cardinality": {
+        "filePath": "src/core/badge/index.ts",
+        "importer": "src/App.ts"
+      },
+      "count": 1
+    },
+    {
+      "cardinality": {
+        "filePath": "src/core/image/index.ts",
+        "importer": "src/App.ts"
+      },
+      "count": 1
+    }
+  ]
+}

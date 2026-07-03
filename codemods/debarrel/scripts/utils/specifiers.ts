@@ -8,6 +8,7 @@ import {
   isInsideNodeModules,
   isLocalRelativePath,
   joinImportPaths,
+  relativePathFromDir,
   resolveModuleImportPath,
 } from "./paths.ts";
 import { parseBarrelExport } from "./barrel.ts";
@@ -49,7 +50,8 @@ export interface SpecRewrite {
  * a direct import path bypassing the barrel.
  */
 export function resolveSpecifier(
-  localBinding: SgNode<Language>,
+  importedName: string,
+  consumerName: string,
   importPath: string,
   def: { kind: string; root: SgRoot<Language>; node: SgNode<Language> },
   importerFilename: string,
@@ -64,7 +66,8 @@ export function resolveSpecifier(
   // external-only checks and head straight to the manual barrel walkers.
   if (def.kind !== "external") {
     return resolveViaBarrelWalk(
-      localBinding,
+      importedName,
+      consumerName,
       importPath,
       importerFilename,
       importerRelativeFilename,
@@ -96,12 +99,12 @@ export function resolveSpecifier(
   if (isBarrelFile(def.root.filename())) {
     // Definition landed on an export_statement in the barrel
     if (def.node.is("export_statement")) {
-      const info = parseBarrelExport(def.node, localBinding.text(), {
+      const info = parseBarrelExport(def.node, importedName, {
         isDefaultImport,
       });
       if (!info) return null;
       return {
-        consumerName: localBinding.text(),
+        consumerName,
         newImportPath: joinImportPaths(importPath, info.sourceFromBarrel),
         localName: info.localName,
         importType: info.importType,
@@ -117,13 +120,13 @@ export function resolveSpecifier(
     if (!impSource) return null;
     const impPath = getStringContent(impSource);
     if (!impPath || !isLocalRelativePath(impPath)) return null;
-    let originalName = localBinding.text();
+    let originalName = importedName;
     if (def.node.is("import_specifier")) {
       const idents = def.node.findAll({ rule: { kind: "identifier" } });
-      if (idents.length >= 1) originalName = idents[0]?.text() ?? "";
+      if (idents.length >= 1) originalName = idents[0]?.text() ?? importedName;
     }
     return {
-      consumerName: localBinding.text(),
+      consumerName,
       newImportPath: joinImportPaths(importPath, impPath),
       localName: originalName,
       importType: "named",
@@ -141,15 +144,15 @@ export function resolveSpecifier(
     resolvedFilename !== barrelFile
   ) {
     const barrelDir = path.dirname(barrelFile);
-    let rel = path.relative(barrelDir, resolvedFilename);
+    let rel = relativePathFromDir(barrelDir, resolvedFilename);
     const ext = path.extname(rel);
     if (ext) rel = rel.slice(0, -ext.length);
     rel = rel.replace(/\/index$/, "") || ".";
     const fromBarrel = rel.startsWith(".") ? rel : `./${rel}`;
     return {
-      consumerName: localBinding.text(),
+      consumerName,
       newImportPath: joinImportPaths(importPath, fromBarrel),
-      localName: localBinding.text(),
+      localName: importedName,
       importType: "named",
       resolvedFilePath: def.root.relativeFilename(),
     };
@@ -164,7 +167,8 @@ export function resolveSpecifier(
  * `export *` chains.
  */
 function resolveViaBarrelWalk(
-  localBinding: SgNode<Language>,
+  importedName: string,
+  consumerName: string,
   importPath: string,
   importerFilename: string,
   importerRelativeFilename: string,
@@ -175,12 +179,12 @@ function resolveViaBarrelWalk(
 
   const reexport = findSymbolViaBarrelReexports(
     barrelFile,
-    localBinding.text(),
+    importedName,
     isDefaultImport,
   );
   if (reexport) {
     return buildRewriteFromTarget(
-      localBinding.text(),
+      consumerName,
       importPath,
       barrelFile,
       reexport.targetFile,
@@ -191,17 +195,17 @@ function resolveViaBarrelWalk(
     );
   }
 
-  const targetFile = findSymbolViaExportStar(barrelFile, localBinding.text());
+  const targetFile = findSymbolViaExportStar(barrelFile, importedName);
   if (!targetFile || targetFile === barrelFile) return null;
 
   return buildRewriteFromTarget(
-    localBinding.text(),
+    consumerName,
     importPath,
     barrelFile,
     targetFile,
     importerFilename,
     importerRelativeFilename,
-    localBinding.text(),
+    importedName,
     "named",
   );
 }
@@ -217,7 +221,7 @@ function buildRewriteFromTarget(
   importType: "default" | "named",
 ): SpecRewrite {
   const barrelDir = path.dirname(barrelFile);
-  let rel = path.relative(barrelDir, targetFile);
+  let rel = relativePathFromDir(barrelDir, targetFile);
   const ext = path.extname(rel);
   if (ext) rel = rel.slice(0, -ext.length);
   rel = rel.replace(/\/index$/, "") || ".";
@@ -254,5 +258,5 @@ function toWorkspaceRelative(
     0,
     importerFilename.length - importerRelativeFilename.length,
   );
-  return path.relative(workspaceRoot, absolutePath).replace(/\\/g, "/");
+  return relativePathFromDir(workspaceRoot, absolutePath).replace(/\\/g, "/");
 }

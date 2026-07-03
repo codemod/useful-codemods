@@ -10,6 +10,69 @@ export function isLocalRelativePath(source: string): boolean {
   );
 }
 
+/**
+ * POSIX-style relative path from one absolute file path to another.
+ * Avoids `path.relative`, which is unavailable in the JSSG runtime.
+ */
+export function relativePath(fromFile: string, toFile: string): string {
+  const fromDir = path.dirname(fromFile).replace(/\\/g, "/");
+  const to = toFile.replace(/\\/g, "/");
+  const fromParts = fromDir.split("/").filter(Boolean);
+  const toParts = to.split("/").filter(Boolean);
+
+  let common = 0;
+  while (
+    common < fromParts.length &&
+    common < toParts.length &&
+    fromParts[common] === toParts[common]
+  ) {
+    common++;
+  }
+
+  const up = fromParts.length - common;
+  const relParts = [
+    ...Array.from({ length: up }, () => ".."),
+    ...toParts.slice(common),
+  ];
+  const rel = relParts.join("/");
+  if (!rel || rel.startsWith(".")) return rel || ".";
+  return `./${rel}`;
+}
+
+/**
+ * POSIX-style relative path from a directory to a file.
+ */
+export function relativePathFromDir(fromDir: string, toFile: string): string {
+  const fromParts = fromDir.replace(/\\/g, "/").split("/").filter(Boolean);
+  const toParts = toFile.replace(/\\/g, "/").split("/").filter(Boolean);
+
+  let common = 0;
+  while (
+    common < fromParts.length &&
+    common < toParts.length &&
+    fromParts[common] === toParts[common]
+  ) {
+    common++;
+  }
+
+  const up = fromParts.length - common;
+  const relParts = [
+    ...Array.from({ length: up }, () => ".."),
+    ...toParts.slice(common),
+  ];
+  const rel = relParts.join("/");
+  return rel || ".";
+}
+
+export function normalizeAbsolutePath(
+  filename: string,
+  workspaceRoot: string,
+): string {
+  return path.isAbsolute(filename)
+    ? path.resolve(filename)
+    : path.resolve(workspaceRoot, filename);
+}
+
 export function joinImportPaths(
   barrelImportPath: string,
   sourceFromBarrel: string,
@@ -318,9 +381,7 @@ export function isPackageEntrypoint(filename: string): boolean {
   if (!parsed || typeof parsed !== "object") return false;
 
   const packageDir = path.dirname(packageJsonPath);
-  const relativeFilename = path
-    .relative(packageDir, filename)
-    .replace(/\\/g, "/");
+  const relativeFilename = relativePathFromDir(packageDir, filename);
   if (!relativeFilename || relativeFilename.startsWith("../")) return false;
 
   const manifest = parsed as {

@@ -1,5 +1,13 @@
 # debarrel
 
+## 0.7.8
+
+### Patch Changes
+
+- Resolve barrel symbols using the imported name (`Foo` in `import { Foo as Bar }`), not the local alias, so folder barrels and wildcard aliases debarrel correctly.
+- Replace `path.relative` with portable helpers for the JSSG runtime when computing paths from a barrel directory to its exports.
+- Normalize barrel paths when detecting namespace importers so barrels are preserved reliably.
+
 ## 0.7.7
 
 ### Patch Changes

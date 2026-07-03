@@ -7,6 +7,7 @@ import { parseBarrelExport } from "./barrel.ts";
 import {
   findWorkspaceSourceRoot,
   isLocalRelativePath,
+  normalizeAbsolutePath,
   resolveImportPath,
   resolveModuleImportPath,
   walkProjectSourceFiles,
@@ -201,8 +202,8 @@ function barrelPathsMatch(left: string, right: string): boolean {
  * be kept when this returns true.
  */
 export function barrelHasNamespaceImporters(barrelFile: string): boolean {
-  const normalizedBarrel = path.resolve(barrelFile);
   const workspaceRoot = findWorkspaceSourceRoot(barrelFile);
+  const normalizedBarrel = normalizeAbsolutePath(barrelFile, workspaceRoot);
 
   for (const file of walkProjectSourceFiles(workspaceRoot)) {
     if (path.resolve(file) === normalizedBarrel) continue;

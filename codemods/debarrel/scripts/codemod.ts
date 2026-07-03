@@ -2,7 +2,7 @@ import type { Codemod, Edit, GetSelector } from "codemod:ast-grep";
 import { useMetricAtom } from "codemod:metrics";
 import path from "path";
 import type { Language } from "./utils/language.ts";
-import { getStringContent } from "./utils/ast.ts";
+import { getStringContent, getImportSpecifierNames } from "./utils/ast.ts";
 import {
   hasPackageJson,
   isBarrelFile,
@@ -65,13 +65,18 @@ const codemod: Codemod<Language> = async (root, options) => {
       });
       totalSpecifiers += specifiers.length;
       for (const spec of specifiers) {
-        const identifiers = spec.findAll({ rule: { kind: "identifier" } });
-        const localBinding = identifiers[identifiers.length - 1];
+        const names = getImportSpecifierNames(spec);
+        if (!names) continue;
+        const { importedName, localName: consumerName } = names;
+        const localBinding = spec
+          .findAll({ rule: { kind: "identifier" } })
+          .at(-1);
         if (!localBinding) continue;
         const def = localBinding.definition();
         if (!def) continue;
         const rw = resolveSpecifier(
-          localBinding,
+          importedName,
+          consumerName,
           importPath,
           def,
           filename,
@@ -99,7 +104,8 @@ const codemod: Codemod<Language> = async (root, options) => {
       const def = defaultIdent.definition();
       if (def) {
         const rw = resolveSpecifier(
-          defaultIdent,
+          defaultIdent.text(),
+          defaultIdent.text(),
           importPath,
           def,
           filename,
