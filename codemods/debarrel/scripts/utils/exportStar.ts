@@ -170,7 +170,7 @@ export function findSymbolViaBarrelReexports(
     // Namespace re-exports (`export * as Ns from "./y"`) are not debarreled here.
     if (stmt.children().some((c) => c.is("namespace_export"))) continue;
     const info = parseBarrelExport(stmt, consumerName, { isDefaultImport });
-    if (!info) continue;
+    if (!info || info.importType === "namespace") continue;
     const targetFile = resolveImportPath(barrelFile, info.sourceFromBarrel);
     if (!targetFile) continue;
     return {
@@ -180,6 +180,19 @@ export function findSymbolViaBarrelReexports(
     };
   }
   return null;
+}
+
+function barrelDirectory(filePath: string): string | null {
+  const base = path.basename(filePath);
+  if (!/^index(\.barrel\.bak)?\.(ts|tsx|js|jsx)$/.test(base)) return null;
+  return path.resolve(path.dirname(filePath));
+}
+
+function barrelPathsMatch(left: string, right: string): boolean {
+  const leftDir = barrelDirectory(left);
+  const rightDir = barrelDirectory(right);
+  if (leftDir && rightDir) return leftDir === rightDir;
+  return path.resolve(left) === path.resolve(right);
 }
 
 /**
@@ -209,7 +222,7 @@ export function barrelHasNamespaceImporters(barrelFile: string): boolean {
       if (!importPath) continue;
 
       const resolved = resolveModuleImportPath(file, importPath);
-      if (resolved && path.resolve(resolved) === normalizedBarrel) {
+      if (resolved && barrelPathsMatch(resolved, normalizedBarrel)) {
         return true;
       }
     }

@@ -1,5 +1,14 @@
 # debarrel
 
+## 0.7.7
+
+### Patch Changes
+
+- Fix double `type` keyword in rewritten `import type { … }` statements when specifiers use inline `type` qualifiers.
+- Resolve imports against `index.barrel.bak.*` when a barrel has already been renamed in the same pass, so consumers processed later still rewrite correctly.
+- Match namespace-importer barrels by directory path, not only exact barrel file path.
+- Rewrite relative folder imports (e.g. `../textarea`) to the concrete module when the directory barrel is removed.
+
 ## 0.7.6
 
 ### Patch Changes

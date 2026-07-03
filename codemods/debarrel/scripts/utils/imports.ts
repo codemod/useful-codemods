@@ -16,11 +16,18 @@ export function buildImportText(
     parts.push(`* as ${ns.consumerName}`);
   }
   const namedSpecs = specs.filter((s) => s.importType === "named");
+  const allNamedAreTypeOnly =
+    namedSpecs.length > 0 &&
+    !defaultSpec &&
+    specs.every((s) => s.importType !== "namespace") &&
+    namedSpecs.every((s) => s.typeOnly);
   if (namedSpecs.length > 0) {
     const specTexts = namedSpecs.map((s) => {
-      // Top-level `import type` and inline `type` on specifiers are mutually
-      // exclusive — using both produces invalid `import type { type Foo }`.
-      const typePrefix = !typeOnly && s.typeOnly ? "type " : "";
+      // Top-level `import type`, all-type-only imports, and inline `type` on
+      // specifiers are mutually exclusive — combining them yields invalid
+      // `import type { type Foo }`.
+      const typePrefix =
+        !typeOnly && !allNamedAreTypeOnly && s.typeOnly ? "type " : "";
       const binding =
         s.localName !== s.consumerName
           ? `${s.localName} as ${s.consumerName}`
@@ -29,11 +36,6 @@ export function buildImportText(
     });
     parts.push(`{ ${specTexts.join(", ")} }`);
   }
-  const allNamedAreTypeOnly =
-    namedSpecs.length > 0 &&
-    !defaultSpec &&
-    specs.every((s) => s.importType !== "namespace") &&
-    namedSpecs.every((s) => s.typeOnly);
   const typeKeyword = typeOnly || allNamedAreTypeOnly ? "type " : "";
   return `import ${typeKeyword}${parts.join(", ")} from ${quoteChar}${sourcePath}${quoteChar};`;
 }

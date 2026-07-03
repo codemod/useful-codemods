@@ -51,7 +51,7 @@ export function joinImportPaths(
 }
 
 export function isBarrelFile(filename: string): boolean {
-  return /^index\.(ts|tsx|js|jsx)$/.test(path.basename(filename));
+  return /^index(\.barrel\.bak)?\.(ts|tsx|js|jsx)$/.test(path.basename(filename));
 }
 
 export function isNextPagesApiRoute(filename: string): boolean {
@@ -78,6 +78,16 @@ function resolveFileCandidates(resolvedBase: string): string | null {
   }
   for (const ext of MODULE_EXTENSIONS) {
     const candidate = path.join(resolvedBase, `index${ext}`);
+    if (fileExists(candidate)) return candidate;
+  }
+  // During a single migration pass, earlier files may have already renamed a
+  // barrel to index.barrel.bak.* — still resolve it for later consumers.
+  for (const ext of MODULE_EXTENSIONS) {
+    const candidate = resolvedBase + `.barrel.bak${ext}`;
+    if (fileExists(candidate)) return candidate;
+  }
+  for (const ext of MODULE_EXTENSIONS) {
+    const candidate = path.join(resolvedBase, `index.barrel.bak${ext}`);
     if (fileExists(candidate)) return candidate;
   }
   return null;
