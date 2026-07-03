@@ -1,0 +1,11 @@
+{
+  "barrel_import": [
+    {
+      "cardinality": {
+        "filePath": "static/app/components/core/alert/index.ts",
+        "importer": "static/app/components/Page.tsx"
+      },
+      "count": 1
+    }
+  ]
+}

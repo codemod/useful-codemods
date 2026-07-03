@@ -1,5 +1,12 @@
 # debarrel
 
+## 0.7.10
+
+### Patch Changes
+
+- Commit barrel renames when a barrel file has no import edits (fixes `.tsx` barrels being skipped when `edits` is empty).
+- Add Sentry-shaped test fixtures for `sentry/stories` and `sentry/icons` namespace barrel preservation.
+
 ## 0.7.9
 
 ### Patch Changes

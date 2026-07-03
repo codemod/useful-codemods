@@ -176,6 +176,7 @@ const codemod: Codemod<Language> = async (root, options) => {
   // Barrel rename — skip files inside node_modules or inside a package
   // when the barrel is an actual package entrypoint (renaming it would break
   // consumers importing via the package name).
+  let barrelRenamed = false;
   if (
     isBarrelFile(filename) &&
     !isInsideNodeModules(filename) &&
@@ -189,10 +190,13 @@ const codemod: Codemod<Language> = async (root, options) => {
       !barrelHasNamespaceImporters(filename)
     ) {
       root.rename(`index.barrel.bak${path.extname(filename)}`);
+      barrelRenamed = true;
     }
   }
 
-  if (edits.length === 0) return null;
+  if (edits.length === 0) {
+    return barrelRenamed ? rootNode.commitEdits([]) : null;
+  }
   return rootNode.commitEdits(edits);
 };
 
