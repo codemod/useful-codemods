@@ -1,5 +1,12 @@
 # debarrel
 
+## 0.7.6
+
+### Patch Changes
+
+- Fix invalid `import type { type Foo }` output when rewriting top-level `import type` statements. Inline `type` qualifiers are now only emitted for mixed value/type imports split across paths.
+- Preserve barrel files that are namespace-imported (`import * as Ns from "…"`), since those imports cannot be debarreled to a single module.
+
 ## 0.7.5
 
 ### Patch Changes

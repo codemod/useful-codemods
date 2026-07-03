@@ -203,6 +203,40 @@ export function isInsideNodeModules(filename: string): boolean {
   );
 }
 
+/** Project root for scanning sibling source files (tsconfig dir, else package dir). */
+export function findWorkspaceSourceRoot(filename: string): string {
+  const tsconfigPath = findNearestTsconfig(filename);
+  if (tsconfigPath) return path.dirname(tsconfigPath);
+  const packageJsonPath = findNearestPackageJson(filename);
+  if (packageJsonPath) return path.dirname(packageJsonPath);
+  return path.dirname(filename);
+}
+
+const SOURCE_FILE_PATTERN = /\.(ts|tsx|js|jsx|mjs|cjs)$/;
+
+/** Recursively list source files under `rootDir`, skipping node_modules. */
+export function walkProjectSourceFiles(
+  rootDir: string,
+  files: string[] = [],
+): string[] {
+  let entries: fs.Dirent[];
+  try {
+    entries = fs.readdirSync(rootDir, { withFileTypes: true });
+  } catch {
+    return files;
+  }
+  for (const entry of entries) {
+    if (entry.name === "node_modules" || entry.name.startsWith(".")) continue;
+    const fullPath = path.join(rootDir, entry.name);
+    if (entry.isDirectory()) {
+      walkProjectSourceFiles(fullPath, files);
+    } else if (SOURCE_FILE_PATTERN.test(entry.name)) {
+      files.push(fullPath);
+    }
+  }
+  return files;
+}
+
 function fileExists(filePath: string): boolean {
   try {
     fs.accessSync(filePath);

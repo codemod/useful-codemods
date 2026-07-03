@@ -10,6 +10,7 @@ import {
   isNextPagesApiRoute,
   isPackageEntrypoint,
 } from "./utils/paths.ts";
+import { barrelHasNamespaceImporters } from "./utils/exportStar.ts";
 import { isPureBarrel } from "./utils/barrel.ts";
 import { resolveSpecifier, type SpecRewrite } from "./utils/specifiers.ts";
 import { buildImportText, groupByPath } from "./utils/imports.ts";
@@ -78,7 +79,7 @@ const codemod: Codemod<Language> = async (root, options) => {
           false,
         );
         if (rw) {
-          if (isTypeOnlyImport || isTypeOnlySpecifier(spec)) {
+          if (!isTypeOnlyImport && isTypeOnlySpecifier(spec)) {
             rw.typeOnly = true;
           }
           rewrites.push(rw);
@@ -176,7 +177,11 @@ const codemod: Codemod<Language> = async (root, options) => {
     (!hasPackageJson(filename) || !isPackageEntrypoint(filename))
   ) {
     const { pure, hasWildcards } = isPureBarrel(rootNode);
-    if (pure && !hasWildcards) {
+    if (
+      pure &&
+      !hasWildcards &&
+      !barrelHasNamespaceImporters(filename)
+    ) {
       root.rename(`index.barrel.bak${path.extname(filename)}`);
     }
   }

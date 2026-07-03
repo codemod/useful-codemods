@@ -18,7 +18,9 @@ export function buildImportText(
   const namedSpecs = specs.filter((s) => s.importType === "named");
   if (namedSpecs.length > 0) {
     const specTexts = namedSpecs.map((s) => {
-      const typePrefix = s.typeOnly ? "type " : "";
+      // Top-level `import type` and inline `type` on specifiers are mutually
+      // exclusive — using both produces invalid `import type { type Foo }`.
+      const typePrefix = !typeOnly && s.typeOnly ? "type " : "";
       const binding =
         s.localName !== s.consumerName
           ? `${s.localName} as ${s.consumerName}`

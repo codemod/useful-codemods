@@ -4,7 +4,13 @@ import { parse, type SgNode, type SgRoot } from "codemod:ast-grep";
 import type { Language } from "./language.ts";
 import { getStringContent } from "./ast.ts";
 import { parseBarrelExport } from "./barrel.ts";
-import { isLocalRelativePath, resolveImportPath } from "./paths.ts";
+import {
+  findWorkspaceSourceRoot,
+  isLocalRelativePath,
+  resolveImportPath,
+  resolveModuleImportPath,
+  walkProjectSourceFiles,
+} from "./paths.ts";
 
 // The semantic analyzer's `definition()` does not chase through bare
 // `export * from "./y"` re-exports in this jssg runtime — for those
@@ -174,6 +180,41 @@ export function findSymbolViaBarrelReexports(
     };
   }
   return null;
+}
+
+/**
+ * True when any source file in the workspace namespace-imports `barrelFile`.
+ * Namespace imports cannot be debarreled to a single module, so the barrel must
+ * be kept when this returns true.
+ */
+export function barrelHasNamespaceImporters(barrelFile: string): boolean {
+  const normalizedBarrel = path.resolve(barrelFile);
+  const workspaceRoot = findWorkspaceSourceRoot(barrelFile);
+
+  for (const file of walkProjectSourceFiles(workspaceRoot)) {
+    if (path.resolve(file) === normalizedBarrel) continue;
+    const root = parseFile(file);
+    if (!root) continue;
+
+    for (const importStmt of root.root().findAll({
+      rule: { kind: "import_statement" },
+    })) {
+      const importClause = importStmt
+        .children()
+        .find((c) => c.is("import_clause"));
+      if (!importClause?.find({ rule: { kind: "namespace_import" } })) continue;
+
+      const sourceNode = importStmt.children().find((c) => c.is("string"));
+      const importPath = sourceNode ? getStringContent(sourceNode) : null;
+      if (!importPath) continue;
+
+      const resolved = resolveModuleImportPath(file, importPath);
+      if (resolved && path.resolve(resolved) === normalizedBarrel) {
+        return true;
+      }
+    }
+  }
+  return false;
 }
 
 function walk(
