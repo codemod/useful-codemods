@@ -1,5 +1,11 @@
 # debarrel
 
+## 0.7.4
+
+### Patch Changes
+
+- Fix debarreling of tsconfig/webpack subpath aliases whose prefix matches the workspace `package.json` name (e.g. `myapp/widgets` when the package is named `myapp`). Previously the package-boundary guard treated every such import as a root package import and skipped rewriting, leaving consumers pointing at deleted barrel files. Also resolve alias imports when walking `export *` barrels and when semantic analysis resolves through a barrel to the source file.
+
 ## 0.7.3
 
 ### Patch Changes

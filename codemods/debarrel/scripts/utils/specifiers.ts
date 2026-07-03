@@ -8,7 +8,7 @@ import {
   isInsideNodeModules,
   isLocalRelativePath,
   joinImportPaths,
-  resolveImportPath,
+  resolveModuleImportPath,
 } from "./paths.ts";
 import { parseBarrelExport } from "./barrel.ts";
 import { findSymbolViaExportStar } from "./exportStar.ts";
@@ -21,6 +21,18 @@ function getImportPackageName(importPath: string): string | null {
 
   const [packageName] = importPath.split("/");
   return packageName || null;
+}
+
+/**
+ * True when `importPath` targets a package root (e.g. `myapp`, `@acme/ui`),
+ * as opposed to a subpath that may be a tsconfig/webpack alias
+ * (e.g. `myapp/widgets`, `@acme/ui/internal`).
+ */
+function isPackageRootImport(importPath: string): boolean {
+  if (importPath.startsWith("@")) {
+    return importPath.split("/").length === 2;
+  }
+  return !importPath.includes("/");
 }
 
 export interface SpecRewrite {
@@ -62,14 +74,18 @@ export function resolveSpecifier(
   // package.json "exports" that would break if we change the import subpath.
   if (isInsideNodeModules(def.root.filename())) return null;
 
-  // For non-relative imports, only preserve the package boundary when the
-  // resolved file belongs to the same named package as the import specifier.
-  // This keeps tsconfig aliases like `~/foo` or `@acme/pkg/*` rewriteable
-  // even when the surrounding repo has an unrelated package.json.
+  // For non-relative imports, only preserve the package boundary for root
+  // package imports (e.g. `myapp`, `@acme/ui`). Subpath imports like
+  // `myapp/widgets` are often tsconfig/webpack aliases that share the
+  // package.json name and must still be debarreled.
   if (!isLocalRelativePath(importPath)) {
     const packageName = getPackageName(def.root.filename());
     const importPackage = getImportPackageName(importPath);
-    if (packageName && importPackage === packageName) {
+    if (
+      packageName &&
+      importPackage === packageName &&
+      isPackageRootImport(importPath)
+    ) {
       return null;
     }
   }
@@ -110,10 +126,30 @@ export function resolveSpecifier(
     };
   }
 
-  // Semantic analyzer resolved all the way through to the actual source file
-  // (not a barrel). If the resolved file is already the direct target of
-  // the import (e.g. @acme/api/models/utils/ratelimiter → ratelimiter.ts),
-  // the import is already correct — don't rewrite.
+  // Semantic analyzer resolved through the barrel to the actual source file.
+  // The import may still point at the barrel alias (e.g. `myapp/widgets`).
+  const resolvedFilename = def.root.filename();
+  const barrelFile = resolveModuleImportPath(importerFilename, importPath);
+  if (
+    barrelFile &&
+    isBarrelFile(barrelFile) &&
+    resolvedFilename !== barrelFile
+  ) {
+    const barrelDir = path.dirname(barrelFile);
+    let rel = path.relative(barrelDir, resolvedFilename);
+    const ext = path.extname(rel);
+    if (ext) rel = rel.slice(0, -ext.length);
+    rel = rel.replace(/\/index$/, "") || ".";
+    const fromBarrel = rel.startsWith(".") ? rel : `./${rel}`;
+    return {
+      consumerName: localBinding.text(),
+      newImportPath: joinImportPaths(importPath, fromBarrel),
+      localName: localBinding.text(),
+      importType: "named",
+      resolvedFilePath: def.root.relativeFilename(),
+    };
+  }
+
   return null;
 }
 
@@ -129,8 +165,7 @@ function resolveViaExportStarWalk(
   importerFilename: string,
   importerRelativeFilename: string,
 ): SpecRewrite | null {
-  if (!isLocalRelativePath(importPath)) return null;
-  const barrelFile = resolveImportPath(importerFilename, importPath);
+  const barrelFile = resolveModuleImportPath(importerFilename, importPath);
   if (!barrelFile || !isBarrelFile(barrelFile)) return null;
 
   const targetFile = findSymbolViaExportStar(barrelFile, localBinding.text());

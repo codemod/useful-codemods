@@ -71,6 +71,18 @@ const MODULE_EXTENSIONS = [".ts", ".tsx", ".js", ".jsx"] as const;
  *
  * Returns null when the import path isn't relative or no candidate exists.
  */
+function resolveFileCandidates(resolvedBase: string): string | null {
+  for (const ext of MODULE_EXTENSIONS) {
+    const candidate = resolvedBase + ext;
+    if (fileExists(candidate)) return candidate;
+  }
+  for (const ext of MODULE_EXTENSIONS) {
+    const candidate = path.join(resolvedBase, `index${ext}`);
+    if (fileExists(candidate)) return candidate;
+  }
+  return null;
+}
+
 export function resolveImportPath(
   importerFilename: string,
   importPath: string,
@@ -78,15 +90,111 @@ export function resolveImportPath(
   if (!isLocalRelativePath(importPath)) return null;
   const importerDir = path.dirname(importerFilename);
   const resolved = path.resolve(importerDir, importPath);
-  for (const ext of MODULE_EXTENSIONS) {
-    const candidate = resolved + ext;
+  return resolveFileCandidates(resolved);
+}
+
+interface TsconfigPaths {
+  baseUrl: string;
+  paths: Record<string, string[]>;
+}
+
+export function findNearestTsconfig(filename: string): string | null {
+  let dir = path.dirname(filename);
+  const root = path.parse(dir).root || "/";
+  while (true) {
+    const candidate = path.join(dir, "tsconfig.json");
     if (fileExists(candidate)) return candidate;
+    if (dir === root) return null;
+    dir = path.dirname(dir);
   }
-  for (const ext of MODULE_EXTENSIONS) {
-    const candidate = path.join(resolved, `index${ext}`);
-    if (fileExists(candidate)) return candidate;
+}
+
+function loadTsconfigPaths(tsconfigPath: string): TsconfigPaths | null {
+  const parsed = readJsonFile(tsconfigPath);
+  if (!parsed || typeof parsed !== "object") return null;
+  const compilerOptions = (parsed as { compilerOptions?: unknown })
+    .compilerOptions;
+  if (!compilerOptions || typeof compilerOptions !== "object") return null;
+  const opts = compilerOptions as { baseUrl?: unknown; paths?: unknown };
+  const baseUrl =
+    typeof opts.baseUrl === "string" ? opts.baseUrl : ".";
+  const paths = opts.paths;
+  if (!paths || typeof paths !== "object") return null;
+  const pathsRecord: Record<string, string[]> = {};
+  for (const [key, value] of Object.entries(paths)) {
+    if (typeof key === "string" && Array.isArray(value)) {
+      pathsRecord[key] = value.filter(
+        (entry): entry is string => typeof entry === "string",
+      );
+    }
+  }
+  return {
+    baseUrl: path.resolve(path.dirname(tsconfigPath), baseUrl),
+    paths: pathsRecord,
+  };
+}
+
+function matchTsconfigPath(
+  importPath: string,
+  pattern: string,
+  targets: string[],
+): string | null {
+  if (pattern.endsWith("/*")) {
+    const prefix = pattern.slice(0, -2);
+    if (!importPath.startsWith(`${prefix}/`)) return null;
+    const subst = importPath.slice(prefix.length + 1);
+    for (const target of targets) {
+      if (target.endsWith("/*")) {
+        return `${target.slice(0, -2)}/${subst}`;
+      }
+    }
+    return null;
+  }
+  if (pattern === importPath) {
+    return targets[0] ?? null;
   }
   return null;
+}
+
+/**
+ * Resolve a tsconfig path alias (e.g. `myapp/widgets`) to the absolute file
+ * it points at on disk, or null when no mapping matches.
+ */
+export function resolveAliasImportPath(
+  importerFilename: string,
+  importPath: string,
+): string | null {
+  if (isLocalRelativePath(importPath)) return null;
+
+  const tsconfigPath = findNearestTsconfig(importerFilename);
+  if (!tsconfigPath) return null;
+  const tsconfig = loadTsconfigPaths(tsconfigPath);
+  if (!tsconfig) return null;
+
+  for (const [pattern, targets] of Object.entries(tsconfig.paths)) {
+    const mapped = matchTsconfigPath(importPath, pattern, targets);
+    if (!mapped) continue;
+    const resolvedBase = path.isAbsolute(mapped)
+      ? mapped
+      : path.resolve(tsconfig.baseUrl, mapped);
+    const candidate = resolveFileCandidates(resolvedBase);
+    if (candidate) return candidate;
+  }
+  return null;
+}
+
+/**
+ * Resolve either a relative import or a tsconfig path alias to an absolute
+ * module file path.
+ */
+export function resolveModuleImportPath(
+  importerFilename: string,
+  importPath: string,
+): string | null {
+  return (
+    resolveImportPath(importerFilename, importPath) ??
+    resolveAliasImportPath(importerFilename, importPath)
+  );
 }
 
 export function isInsideNodeModules(filename: string): boolean {
