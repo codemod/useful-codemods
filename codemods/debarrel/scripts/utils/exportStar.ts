@@ -5,7 +5,9 @@ import type { Language } from "./language.ts";
 import { getStringContent } from "./ast.ts";
 import { parseBarrelExport } from "./barrel.ts";
 import {
+  fileHasMdxNamespaceImportFrom,
   findWorkspaceSourceRoot,
+  getAliasImportPathsForBarrel,
   isLocalRelativePath,
   normalizeAbsolutePath,
   resolveImportPath,
@@ -204,9 +206,15 @@ function barrelPathsMatch(left: string, right: string): boolean {
 export function barrelHasNamespaceImporters(barrelFile: string): boolean {
   const workspaceRoot = findWorkspaceSourceRoot(barrelFile);
   const normalizedBarrel = normalizeAbsolutePath(barrelFile, workspaceRoot);
+  const aliasImportPaths = new Set(getAliasImportPathsForBarrel(barrelFile));
 
   for (const file of walkProjectSourceFiles(workspaceRoot)) {
-    if (path.resolve(file) === normalizedBarrel) continue;
+    if (path.resolve(file) === path.resolve(normalizedBarrel)) continue;
+
+    if (fileHasMdxNamespaceImportFrom(file, aliasImportPaths)) {
+      return true;
+    }
+
     const root = parseFile(file);
     if (!root) continue;
 
@@ -221,6 +229,10 @@ export function barrelHasNamespaceImporters(barrelFile: string): boolean {
       const sourceNode = importStmt.children().find((c) => c.is("string"));
       const importPath = sourceNode ? getStringContent(sourceNode) : null;
       if (!importPath) continue;
+
+      if (aliasImportPaths.has(importPath)) {
+        return true;
+      }
 
       const resolved = resolveModuleImportPath(file, importPath);
       if (resolved && barrelPathsMatch(resolved, normalizedBarrel)) {

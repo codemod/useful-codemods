@@ -1,5 +1,13 @@
 # debarrel
 
+## 0.7.9
+
+### Patch Changes
+
+- Preserve namespace-imported barrels when tsconfig aliases share the package name (e.g. `sentry/stories` with `sentry/*` paths) by inverse-mapping alias strings and matching import paths directly.
+- Scan `.mdx` files for namespace imports when deciding whether to keep a barrel.
+- Resolve tsconfig and workspace roots with absolute paths during namespace-importer detection.
+
 ## 0.7.8
 
 ### Patch Changes

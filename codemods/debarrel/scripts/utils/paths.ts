@@ -172,7 +172,7 @@ interface TsconfigPaths {
 }
 
 export function findNearestTsconfig(filename: string): string | null {
-  let dir = path.dirname(filename);
+  let dir = path.dirname(path.resolve(filename));
   const root = path.parse(dir).root || "/";
   while (true) {
     const candidate = path.join(dir, "tsconfig.json");
@@ -278,36 +278,100 @@ export function isInsideNodeModules(filename: string): boolean {
 
 /** Project root for scanning sibling source files (tsconfig dir, else package dir). */
 export function findWorkspaceSourceRoot(filename: string): string {
-  const tsconfigPath = findNearestTsconfig(filename);
-  if (tsconfigPath) return path.dirname(tsconfigPath);
-  const packageJsonPath = findNearestPackageJson(filename);
-  if (packageJsonPath) return path.dirname(packageJsonPath);
-  return path.dirname(filename);
+  const absolute = path.resolve(filename);
+  const tsconfigPath = findNearestTsconfig(absolute);
+  if (tsconfigPath) return path.dirname(path.resolve(tsconfigPath));
+  const packageJsonPath = findNearestPackageJson(absolute);
+  if (packageJsonPath) return path.dirname(path.resolve(packageJsonPath));
+  return path.dirname(absolute);
+}
+
+/**
+ * Tsconfig path aliases that resolve to `barrelFile` (e.g. `sentry/stories` for
+ * `static/app/stories/index.tsx` when `sentry/*` maps to `./static/app/*`).
+ */
+export function getAliasImportPathsForBarrel(barrelFile: string): string[] {
+  const workspaceRoot = findWorkspaceSourceRoot(barrelFile);
+  const absoluteBarrel = normalizeAbsolutePath(barrelFile, workspaceRoot);
+  const barrelDir = path.resolve(path.dirname(absoluteBarrel));
+  const tsconfigPath = findNearestTsconfig(absoluteBarrel);
+  if (!tsconfigPath) return [];
+
+  const tsconfig = loadTsconfigPaths(tsconfigPath);
+  if (!tsconfig) return [];
+
+  const aliases: string[] = [];
+  for (const [pattern, targets] of Object.entries(tsconfig.paths)) {
+    if (!pattern.endsWith("/*")) continue;
+    const prefix = pattern.slice(0, -2);
+    for (const target of targets) {
+      if (!target.endsWith("/*")) continue;
+      const targetPrefix = path.resolve(
+        tsconfig.baseUrl,
+        target.slice(0, -2),
+      );
+      if (barrelDir === targetPrefix) {
+        aliases.push(prefix);
+        continue;
+      }
+      if (!barrelDir.startsWith(`${targetPrefix}${path.sep}`)) continue;
+      const subst = path.relative(targetPrefix, barrelDir).replace(/\\/g, "/");
+      if (!subst || subst.includes("..")) continue;
+      aliases.push(`${prefix}/${subst}`);
+    }
+  }
+  return aliases;
 }
 
 const SOURCE_FILE_PATTERN = /\.(ts|tsx|js|jsx|mjs|cjs)$/;
+const MDX_FILE_PATTERN = /\.mdx$/;
+const NAMESPACE_IMPORT_RE =
+  /import\s+\*\s+as\s+[\w$]+\s+from\s+['"]([^'"]+)['"]/g;
 
 /** Recursively list source files under `rootDir`, skipping node_modules. */
 export function walkProjectSourceFiles(
   rootDir: string,
   files: string[] = [],
 ): string[] {
+  const absoluteRoot = path.resolve(rootDir);
   let entries: fs.Dirent[];
   try {
-    entries = fs.readdirSync(rootDir, { withFileTypes: true });
+    entries = fs.readdirSync(absoluteRoot, { withFileTypes: true });
   } catch {
     return files;
   }
   for (const entry of entries) {
     if (entry.name === "node_modules" || entry.name.startsWith(".")) continue;
-    const fullPath = path.join(rootDir, entry.name);
+    const fullPath = path.resolve(absoluteRoot, entry.name);
     if (entry.isDirectory()) {
       walkProjectSourceFiles(fullPath, files);
-    } else if (SOURCE_FILE_PATTERN.test(entry.name)) {
+    } else if (
+      SOURCE_FILE_PATTERN.test(entry.name) ||
+      MDX_FILE_PATTERN.test(entry.name)
+    ) {
       files.push(fullPath);
     }
   }
   return files;
+}
+
+/** True when an MDX file namespace-imports one of `importPaths`. */
+export function fileHasMdxNamespaceImportFrom(
+  filePath: string,
+  importPaths: Set<string>,
+): boolean {
+  if (!MDX_FILE_PATTERN.test(filePath)) return false;
+  let source: string;
+  try {
+    source = fs.readFileSync(filePath, "utf8");
+  } catch {
+    return false;
+  }
+  for (const match of source.matchAll(NAMESPACE_IMPORT_RE)) {
+    const importPath = match[1];
+    if (importPath && importPaths.has(importPath)) return true;
+  }
+  return false;
 }
 
 function fileExists(filePath: string): boolean {
