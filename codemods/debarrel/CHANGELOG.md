@@ -1,5 +1,15 @@
 # debarrel
 
+## 0.7.11
+
+### Patch Changes
+
+- Parse JSONC `tsconfig.json` files (comments and trailing commas) so tsconfig path aliases resolve on real-world configs.
+- Route semantic-analyzer-resolved rewrites through `buildRewriteFromTarget` so default imports and barrel metrics stay correct.
+- Distinguish `export { default } from "./x"` from `export { Foo as default }` when choosing import type.
+- Cache workspace source file listings during namespace-importer detection.
+- Use `path.relative` instead of a hand-rolled relative path helper.
+
 ## 0.7.10
 
 ### Patch Changes
