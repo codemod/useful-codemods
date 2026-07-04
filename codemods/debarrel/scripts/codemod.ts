@@ -1,8 +1,8 @@
-import type { Codemod, Edit, GetSelector } from "codemod:ast-grep";
+import type { Codemod, Edit, GetSelector, SgNode } from "codemod:ast-grep";
 import { useMetricAtom } from "codemod:metrics";
 import path from "path";
 import type { Language } from "./utils/language.ts";
-import { getStringContent } from "./utils/ast.ts";
+import { getStringContent, getImportSpecifierNames } from "./utils/ast.ts";
 import {
   hasPackageJson,
   isBarrelFile,
@@ -10,6 +10,7 @@ import {
   isNextPagesApiRoute,
   isPackageEntrypoint,
 } from "./utils/paths.ts";
+import { barrelHasNamespaceImporters } from "./utils/exportStar.ts";
 import { isPureBarrel } from "./utils/barrel.ts";
 import { resolveSpecifier, type SpecRewrite } from "./utils/specifiers.ts";
 import { buildImportText, groupByPath } from "./utils/imports.ts";
@@ -48,6 +49,9 @@ const codemod: Codemod<Language> = async (root, options) => {
     // resolved declarations are `export type` aliases).
     const isTypeOnlyImport = importStmt.children().some((c) => c.is("type"));
 
+    const isTypeOnlySpecifier = (spec: SgNode<Language>) =>
+      spec.children().some((c) => c.is("type"));
+
     const rewrites: SpecRewrite[] = [];
     let totalSpecifiers = 0;
 
@@ -61,19 +65,30 @@ const codemod: Codemod<Language> = async (root, options) => {
       });
       totalSpecifiers += specifiers.length;
       for (const spec of specifiers) {
-        const identifiers = spec.findAll({ rule: { kind: "identifier" } });
-        const localBinding = identifiers[identifiers.length - 1];
+        const names = getImportSpecifierNames(spec);
+        if (!names) continue;
+        const { importedName, localName: consumerName } = names;
+        const localBinding = spec
+          .findAll({ rule: { kind: "identifier" } })
+          .at(-1);
         if (!localBinding) continue;
         const def = localBinding.definition();
         if (!def) continue;
         const rw = resolveSpecifier(
-          localBinding,
+          importedName,
+          consumerName,
           importPath,
           def,
           filename,
           relativeFilename,
+          false,
         );
-        if (rw) rewrites.push(rw);
+        if (rw) {
+          if (!isTypeOnlyImport && isTypeOnlySpecifier(spec)) {
+            rw.typeOnly = true;
+          }
+          rewrites.push(rw);
+        }
       }
     }
 
@@ -89,11 +104,13 @@ const codemod: Codemod<Language> = async (root, options) => {
       const def = defaultIdent.definition();
       if (def) {
         const rw = resolveSpecifier(
-          defaultIdent,
+          defaultIdent.text(),
+          defaultIdent.text(),
           importPath,
           def,
           filename,
           relativeFilename,
+          true,
         );
         if (rw) rewrites.push(rw);
       }
@@ -159,6 +176,7 @@ const codemod: Codemod<Language> = async (root, options) => {
   // Barrel rename — skip files inside node_modules or inside a package
   // when the barrel is an actual package entrypoint (renaming it would break
   // consumers importing via the package name).
+  let barrelRenamed = false;
   if (
     isBarrelFile(filename) &&
     !isInsideNodeModules(filename) &&
@@ -166,12 +184,19 @@ const codemod: Codemod<Language> = async (root, options) => {
     (!hasPackageJson(filename) || !isPackageEntrypoint(filename))
   ) {
     const { pure, hasWildcards } = isPureBarrel(rootNode);
-    if (pure && !hasWildcards) {
+    if (
+      pure &&
+      !hasWildcards &&
+      !barrelHasNamespaceImporters(filename)
+    ) {
       root.rename(`index.barrel.bak${path.extname(filename)}`);
+      barrelRenamed = true;
     }
   }
 
-  if (edits.length === 0) return null;
+  if (edits.length === 0) {
+    return barrelRenamed ? rootNode.commitEdits([]) : null;
+  }
   return rootNode.commitEdits(edits);
 };
 

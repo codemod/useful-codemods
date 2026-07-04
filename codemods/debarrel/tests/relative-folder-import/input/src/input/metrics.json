@@ -1,0 +1,11 @@
+{
+  "barrel_import": [
+    {
+      "cardinality": {
+        "filePath": "src/textarea/index.ts",
+        "importer": "src/input/inputGroup.ts"
+      },
+      "count": 2
+    }
+  ]
+}

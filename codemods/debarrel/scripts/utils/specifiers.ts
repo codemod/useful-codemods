@@ -8,10 +8,11 @@ import {
   isInsideNodeModules,
   isLocalRelativePath,
   joinImportPaths,
-  resolveImportPath,
+  relativePathFromDir,
+  resolveModuleImportPath,
 } from "./paths.ts";
 import { parseBarrelExport } from "./barrel.ts";
-import { findSymbolViaExportStar } from "./exportStar.ts";
+import { findSymbolViaBarrelReexports, findSymbolViaExportStar } from "./exportStar.ts";
 
 function getImportPackageName(importPath: string): string | null {
   if (importPath.startsWith("@")) {
@@ -23,12 +24,25 @@ function getImportPackageName(importPath: string): string | null {
   return packageName || null;
 }
 
+/**
+ * True when `importPath` targets a package root (e.g. `myapp`, `@acme/ui`),
+ * as opposed to a subpath that may be a tsconfig/webpack alias
+ * (e.g. `myapp/widgets`, `@acme/ui/internal`).
+ */
+function isPackageRootImport(importPath: string): boolean {
+  if (importPath.startsWith("@")) {
+    return importPath.split("/").length === 2;
+  }
+  return !importPath.includes("/");
+}
+
 export interface SpecRewrite {
   consumerName: string;
   newImportPath: string;
   localName: string;
   importType: "default" | "named" | "namespace";
   resolvedFilePath: string;
+  typeOnly?: boolean;
 }
 
 /**
@@ -36,24 +50,28 @@ export interface SpecRewrite {
  * a direct import path bypassing the barrel.
  */
 export function resolveSpecifier(
-  localBinding: SgNode<Language>,
+  importedName: string,
+  consumerName: string,
   importPath: string,
   def: { kind: string; root: SgRoot<Language>; node: SgNode<Language> },
   importerFilename: string,
   importerRelativeFilename: string,
+  isDefaultImport = false,
 ): SpecRewrite | null {
   // When the semantic analyzer fully resolves the binding to a different
   // file we go through the `external` branches below. When it punts (most
   // commonly because the symbol flows through a bare `export *` re-export
   // that the analyzer can't enumerate statically), `def.kind` is "import"
   // and `def.root.filename()` is the importer itself — skip the
-  // external-only checks and head straight to the manual export-star walker.
+  // external-only checks and head straight to the manual barrel walkers.
   if (def.kind !== "external") {
-    return resolveViaExportStarWalk(
-      localBinding,
+    return resolveViaBarrelWalk(
+      importedName,
+      consumerName,
       importPath,
       importerFilename,
       importerRelativeFilename,
+      isDefaultImport,
     );
   }
 
@@ -62,14 +80,18 @@ export function resolveSpecifier(
   // package.json "exports" that would break if we change the import subpath.
   if (isInsideNodeModules(def.root.filename())) return null;
 
-  // For non-relative imports, only preserve the package boundary when the
-  // resolved file belongs to the same named package as the import specifier.
-  // This keeps tsconfig aliases like `~/foo` or `@acme/pkg/*` rewriteable
-  // even when the surrounding repo has an unrelated package.json.
+  // For non-relative imports, only preserve the package boundary for root
+  // package imports (e.g. `myapp`, `@acme/ui`). Subpath imports like
+  // `myapp/widgets` are often tsconfig/webpack aliases that share the
+  // package.json name and must still be debarreled.
   if (!isLocalRelativePath(importPath)) {
     const packageName = getPackageName(def.root.filename());
     const importPackage = getImportPackageName(importPath);
-    if (packageName && importPackage === packageName) {
+    if (
+      packageName &&
+      importPackage === packageName &&
+      isPackageRootImport(importPath)
+    ) {
       return null;
     }
   }
@@ -77,10 +99,12 @@ export function resolveSpecifier(
   if (isBarrelFile(def.root.filename())) {
     // Definition landed on an export_statement in the barrel
     if (def.node.is("export_statement")) {
-      const info = parseBarrelExport(def.node, localBinding.text());
+      const info = parseBarrelExport(def.node, importedName, {
+        isDefaultImport,
+      });
       if (!info) return null;
       return {
-        consumerName: localBinding.text(),
+        consumerName,
         newImportPath: joinImportPaths(importPath, info.sourceFromBarrel),
         localName: info.localName,
         importType: info.importType,
@@ -96,13 +120,13 @@ export function resolveSpecifier(
     if (!impSource) return null;
     const impPath = getStringContent(impSource);
     if (!impPath || !isLocalRelativePath(impPath)) return null;
-    let originalName = localBinding.text();
+    let originalName = importedName;
     if (def.node.is("import_specifier")) {
       const idents = def.node.findAll({ rule: { kind: "identifier" } });
-      if (idents.length >= 1) originalName = idents[0]?.text() ?? "";
+      if (idents.length >= 1) originalName = idents[0]?.text() ?? importedName;
     }
     return {
-      consumerName: localBinding.text(),
+      consumerName,
       newImportPath: joinImportPaths(importPath, impPath),
       localName: originalName,
       importType: "named",
@@ -110,41 +134,105 @@ export function resolveSpecifier(
     };
   }
 
-  // Semantic analyzer resolved all the way through to the actual source file
-  // (not a barrel). If the resolved file is already the direct target of
-  // the import (e.g. @acme/api/models/utils/ratelimiter → ratelimiter.ts),
-  // the import is already correct — don't rewrite.
+  // Semantic analyzer resolved through the barrel to the actual source file.
+  // The import may still point at the barrel alias (e.g. `myapp/widgets`).
+  const resolvedFilename = def.root.filename();
+  const barrelFile = resolveModuleImportPath(importerFilename, importPath);
+  if (
+    barrelFile &&
+    isBarrelFile(barrelFile) &&
+    resolvedFilename !== barrelFile
+  ) {
+    const reexport = findSymbolViaBarrelReexports(
+      barrelFile,
+      importedName,
+      isDefaultImport,
+    );
+    const localName = reexport?.localName ?? importedName;
+    const importType =
+      reexport?.importType ?? (isDefaultImport ? "default" : "named");
+
+    return buildRewriteFromTarget(
+      consumerName,
+      importPath,
+      barrelFile,
+      resolvedFilename,
+      importerFilename,
+      importerRelativeFilename,
+      localName,
+      importType,
+    );
+  }
+
   return null;
 }
 
 /**
- * Walk the barrel pointed to by `importPath` and look for which file in its
- * `export * from "./y"` chain declares `localBinding`'s name. Used when the
- * semantic analyzer can't tell us — bare `export *` re-exports don't carry
- * named bindings the analyzer can chase.
+ * Walk the barrel pointed to by `importPath` when the semantic analyzer
+ * can't resolve the binding. Tries explicit re-exports first, then bare
+ * `export *` chains.
  */
-function resolveViaExportStarWalk(
-  localBinding: SgNode<Language>,
+function resolveViaBarrelWalk(
+  importedName: string,
+  consumerName: string,
   importPath: string,
   importerFilename: string,
   importerRelativeFilename: string,
+  isDefaultImport: boolean,
 ): SpecRewrite | null {
-  if (!isLocalRelativePath(importPath)) return null;
-  const barrelFile = resolveImportPath(importerFilename, importPath);
+  const barrelFile = resolveModuleImportPath(importerFilename, importPath);
   if (!barrelFile || !isBarrelFile(barrelFile)) return null;
 
-  const targetFile = findSymbolViaExportStar(barrelFile, localBinding.text());
+  const reexport = findSymbolViaBarrelReexports(
+    barrelFile,
+    importedName,
+    isDefaultImport,
+  );
+  if (reexport) {
+    return buildRewriteFromTarget(
+      consumerName,
+      importPath,
+      barrelFile,
+      reexport.targetFile,
+      importerFilename,
+      importerRelativeFilename,
+      reexport.localName,
+      reexport.importType,
+    );
+  }
+
+  const targetFile = findSymbolViaExportStar(barrelFile, importedName);
   if (!targetFile || targetFile === barrelFile) return null;
 
+  return buildRewriteFromTarget(
+    consumerName,
+    importPath,
+    barrelFile,
+    targetFile,
+    importerFilename,
+    importerRelativeFilename,
+    importedName,
+    "named",
+  );
+}
+
+function buildRewriteFromTarget(
+  consumerName: string,
+  importPath: string,
+  barrelFile: string,
+  targetFile: string,
+  importerFilename: string,
+  importerRelativeFilename: string,
+  localName: string,
+  importType: "default" | "named",
+): SpecRewrite {
   const barrelDir = path.dirname(barrelFile);
-  let rel = path.relative(barrelDir, targetFile);
+  let rel = relativePathFromDir(barrelDir, targetFile);
   const ext = path.extname(rel);
   if (ext) rel = rel.slice(0, -ext.length);
   rel = rel.replace(/\/index$/, "") || ".";
   const fromBarrel = rel.startsWith(".") ? rel : `./${rel}`;
 
-  // Mirror the barrel's workspace-relative path for the metric, so the
-  // `filePath` cardinality matches the named-reexport branches above.
   const barrelRelativeFilename = toWorkspaceRelative(
     importerFilename,
     importerRelativeFilename,
@@ -152,10 +240,10 @@ function resolveViaExportStarWalk(
   );
 
   return {
-    consumerName: localBinding.text(),
+    consumerName,
     newImportPath: joinImportPaths(importPath, fromBarrel),
-    localName: localBinding.text(),
-    importType: "named",
+    localName,
+    importType,
     resolvedFilePath: barrelRelativeFilename,
   };
 }
@@ -176,5 +264,5 @@ function toWorkspaceRelative(
     0,
     importerFilename.length - importerRelativeFilename.length,
   );
-  return path.relative(workspaceRoot, absolutePath).replace(/\\/g, "/");
+  return relativePathFromDir(workspaceRoot, absolutePath).replace(/\\/g, "/");
 }

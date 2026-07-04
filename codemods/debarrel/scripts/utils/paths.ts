@@ -10,6 +10,23 @@ export function isLocalRelativePath(source: string): boolean {
   );
 }
 
+/**
+ * Relative path from a directory to a file, normalized to POSIX separators.
+ * Uses `path.relative` (available in the JSSG runtime, though undocumented).
+ */
+export function relativePathFromDir(fromDir: string, toFile: string): string {
+  return path.relative(fromDir, toFile).replace(/\\/g, "/");
+}
+
+export function normalizeAbsolutePath(
+  filename: string,
+  workspaceRoot: string,
+): string {
+  return path.isAbsolute(filename)
+    ? path.resolve(filename)
+    : path.resolve(workspaceRoot, filename);
+}
+
 export function joinImportPaths(
   barrelImportPath: string,
   sourceFromBarrel: string,
@@ -51,7 +68,7 @@ export function joinImportPaths(
 }
 
 export function isBarrelFile(filename: string): boolean {
-  return /^index\.(ts|tsx|js|jsx)$/.test(path.basename(filename));
+  return /^index(\.barrel\.bak)?\.(ts|tsx|js|jsx)$/.test(path.basename(filename));
 }
 
 export function isNextPagesApiRoute(filename: string): boolean {
@@ -71,6 +88,28 @@ const MODULE_EXTENSIONS = [".ts", ".tsx", ".js", ".jsx"] as const;
  *
  * Returns null when the import path isn't relative or no candidate exists.
  */
+function resolveFileCandidates(resolvedBase: string): string | null {
+  for (const ext of MODULE_EXTENSIONS) {
+    const candidate = resolvedBase + ext;
+    if (fileExists(candidate)) return candidate;
+  }
+  for (const ext of MODULE_EXTENSIONS) {
+    const candidate = path.join(resolvedBase, `index${ext}`);
+    if (fileExists(candidate)) return candidate;
+  }
+  // During a single migration pass, earlier files may have already renamed a
+  // barrel to index.barrel.bak.* — still resolve it for later consumers.
+  for (const ext of MODULE_EXTENSIONS) {
+    const candidate = resolvedBase + `.barrel.bak${ext}`;
+    if (fileExists(candidate)) return candidate;
+  }
+  for (const ext of MODULE_EXTENSIONS) {
+    const candidate = path.join(resolvedBase, `index.barrel.bak${ext}`);
+    if (fileExists(candidate)) return candidate;
+  }
+  return null;
+}
+
 export function resolveImportPath(
   importerFilename: string,
   importPath: string,
@@ -78,21 +117,282 @@ export function resolveImportPath(
   if (!isLocalRelativePath(importPath)) return null;
   const importerDir = path.dirname(importerFilename);
   const resolved = path.resolve(importerDir, importPath);
-  for (const ext of MODULE_EXTENSIONS) {
-    const candidate = resolved + ext;
+  return resolveFileCandidates(resolved);
+}
+
+interface TsconfigPaths {
+  baseUrl: string;
+  paths: Record<string, string[]>;
+}
+
+export function findNearestTsconfig(filename: string): string | null {
+  let dir = path.dirname(path.resolve(filename));
+  const root = path.parse(dir).root || "/";
+  while (true) {
+    const candidate = path.join(dir, "tsconfig.json");
     if (fileExists(candidate)) return candidate;
+    if (dir === root) return null;
+    dir = path.dirname(dir);
   }
-  for (const ext of MODULE_EXTENSIONS) {
-    const candidate = path.join(resolved, `index${ext}`);
-    if (fileExists(candidate)) return candidate;
+}
+
+/** Strip line and block comments so JSONC tsconfig files parse. */
+function stripJsonComments(text: string): string {
+  let result = "";
+  let i = 0;
+  while (i < text.length) {
+    const ch = text[i]!;
+    if (ch === '"') {
+      result += ch;
+      i++;
+      while (i < text.length) {
+        const inner = text[i]!;
+        result += inner;
+        if (inner === "\\") {
+          i++;
+          if (i < text.length) result += text[i]!;
+        } else if (inner === '"') {
+          break;
+        }
+        i++;
+      }
+      i++;
+      continue;
+    }
+    if (text.startsWith("//", i)) {
+      const newline = text.indexOf("\n", i);
+      if (newline === -1) break;
+      result += "\n";
+      i = newline + 1;
+      continue;
+    }
+    if (text.startsWith("/*", i)) {
+      const end = text.indexOf("*/", i + 2);
+      i = end === -1 ? text.length : end + 2;
+      continue;
+    }
+    result += ch;
+    i++;
+  }
+  return result;
+}
+
+function stripTrailingCommas(text: string): string {
+  return text.replace(/,(\s*[}\]])/g, "$1");
+}
+
+function readTsconfigJson(filePath: string): unknown | null {
+  try {
+    const raw = fs.readFileSync(filePath, "utf8");
+    const stripped = stripTrailingCommas(stripJsonComments(raw));
+    return JSON.parse(stripped);
+  } catch {
+    return null;
+  }
+}
+
+function loadTsconfigPaths(tsconfigPath: string): TsconfigPaths | null {
+  const parsed = readTsconfigJson(tsconfigPath);
+  if (!parsed || typeof parsed !== "object") return null;
+  const compilerOptions = (parsed as { compilerOptions?: unknown })
+    .compilerOptions;
+  if (!compilerOptions || typeof compilerOptions !== "object") return null;
+  const opts = compilerOptions as { baseUrl?: unknown; paths?: unknown };
+  const baseUrl =
+    typeof opts.baseUrl === "string" ? opts.baseUrl : ".";
+  const paths = opts.paths;
+  if (!paths || typeof paths !== "object") return null;
+  const pathsRecord: Record<string, string[]> = {};
+  for (const [key, value] of Object.entries(paths)) {
+    if (typeof key === "string" && Array.isArray(value)) {
+      pathsRecord[key] = value.filter(
+        (entry): entry is string => typeof entry === "string",
+      );
+    }
+  }
+  return {
+    baseUrl: path.resolve(path.dirname(tsconfigPath), baseUrl),
+    paths: pathsRecord,
+  };
+}
+
+function matchTsconfigPath(
+  importPath: string,
+  pattern: string,
+  targets: string[],
+): string | null {
+  if (pattern.endsWith("/*")) {
+    const prefix = pattern.slice(0, -2);
+    if (!importPath.startsWith(`${prefix}/`)) return null;
+    const subst = importPath.slice(prefix.length + 1);
+    for (const target of targets) {
+      if (target.endsWith("/*")) {
+        return `${target.slice(0, -2)}/${subst}`;
+      }
+    }
+    return null;
+  }
+  if (pattern === importPath) {
+    return targets[0] ?? null;
   }
   return null;
+}
+
+/**
+ * Resolve a tsconfig path alias (e.g. `myapp/widgets`) to the absolute file
+ * it points at on disk, or null when no mapping matches.
+ */
+export function resolveAliasImportPath(
+  importerFilename: string,
+  importPath: string,
+): string | null {
+  if (isLocalRelativePath(importPath)) return null;
+
+  const tsconfigPath = findNearestTsconfig(importerFilename);
+  if (!tsconfigPath) return null;
+  const tsconfig = loadTsconfigPaths(tsconfigPath);
+  if (!tsconfig) return null;
+
+  for (const [pattern, targets] of Object.entries(tsconfig.paths)) {
+    const mapped = matchTsconfigPath(importPath, pattern, targets);
+    if (!mapped) continue;
+    const resolvedBase = path.isAbsolute(mapped)
+      ? mapped
+      : path.resolve(tsconfig.baseUrl, mapped);
+    const candidate = resolveFileCandidates(resolvedBase);
+    if (candidate) return candidate;
+  }
+  return null;
+}
+
+/**
+ * Resolve either a relative import or a tsconfig path alias to an absolute
+ * module file path.
+ */
+export function resolveModuleImportPath(
+  importerFilename: string,
+  importPath: string,
+): string | null {
+  return (
+    resolveImportPath(importerFilename, importPath) ??
+    resolveAliasImportPath(importerFilename, importPath)
+  );
 }
 
 export function isInsideNodeModules(filename: string): boolean {
   return (
     filename.includes("/node_modules/") || filename.includes("\\node_modules\\")
   );
+}
+
+/** Project root for scanning sibling source files (tsconfig dir, else package dir). */
+export function findWorkspaceSourceRoot(filename: string): string {
+  const absolute = path.resolve(filename);
+  const tsconfigPath = findNearestTsconfig(absolute);
+  if (tsconfigPath) return path.dirname(path.resolve(tsconfigPath));
+  const packageJsonPath = findNearestPackageJson(absolute);
+  if (packageJsonPath) return path.dirname(path.resolve(packageJsonPath));
+  return path.dirname(absolute);
+}
+
+/**
+ * Tsconfig path aliases that resolve to `barrelFile` (e.g. `sentry/stories` for
+ * `static/app/stories/index.tsx` when `sentry/*` maps to `./static/app/*`).
+ */
+export function getAliasImportPathsForBarrel(barrelFile: string): string[] {
+  const workspaceRoot = findWorkspaceSourceRoot(barrelFile);
+  const absoluteBarrel = normalizeAbsolutePath(barrelFile, workspaceRoot);
+  const barrelDir = path.resolve(path.dirname(absoluteBarrel));
+  const tsconfigPath = findNearestTsconfig(absoluteBarrel);
+  if (!tsconfigPath) return [];
+
+  const tsconfig = loadTsconfigPaths(tsconfigPath);
+  if (!tsconfig) return [];
+
+  const aliases: string[] = [];
+  for (const [pattern, targets] of Object.entries(tsconfig.paths)) {
+    if (!pattern.endsWith("/*")) continue;
+    const prefix = pattern.slice(0, -2);
+    for (const target of targets) {
+      if (!target.endsWith("/*")) continue;
+      const targetPrefix = path.resolve(
+        tsconfig.baseUrl,
+        target.slice(0, -2),
+      );
+      if (barrelDir === targetPrefix) {
+        aliases.push(prefix);
+        continue;
+      }
+      if (!barrelDir.startsWith(`${targetPrefix}${path.sep}`)) continue;
+      const subst = path.relative(targetPrefix, barrelDir).replace(/\\/g, "/");
+      if (!subst || subst.includes("..")) continue;
+      aliases.push(`${prefix}/${subst}`);
+    }
+  }
+  return aliases;
+}
+
+const SOURCE_FILE_PATTERN = /\.(ts|tsx|js|jsx|mjs|cjs)$/;
+const MDX_FILE_PATTERN = /\.mdx$/;
+const NAMESPACE_IMPORT_RE =
+  /import\s+\*\s+as\s+[\w$]+\s+from\s+['"]([^'"]+)['"]/g;
+
+/** Recursively list source files under `rootDir`, skipping node_modules. */
+export function walkProjectSourceFiles(
+  rootDir: string,
+  files: string[] = [],
+): string[] {
+  const absoluteRoot = path.resolve(rootDir);
+  let entries: fs.Dirent[];
+  try {
+    entries = fs.readdirSync(absoluteRoot, { withFileTypes: true });
+  } catch {
+    return files;
+  }
+  for (const entry of entries) {
+    if (entry.name === "node_modules" || entry.name.startsWith(".")) continue;
+    const fullPath = path.resolve(absoluteRoot, entry.name);
+    if (entry.isDirectory()) {
+      walkProjectSourceFiles(fullPath, files);
+    } else if (
+      SOURCE_FILE_PATTERN.test(entry.name) ||
+      MDX_FILE_PATTERN.test(entry.name)
+    ) {
+      files.push(fullPath);
+    }
+  }
+  return files;
+}
+
+const projectSourceFilesCache = new Map<string, string[]>();
+
+/** Cached wrapper around {@link walkProjectSourceFiles} for a codemod run. */
+export function getProjectSourceFiles(rootDir: string): string[] {
+  const absoluteRoot = path.resolve(rootDir);
+  const cached = projectSourceFilesCache.get(absoluteRoot);
+  if (cached) return cached;
+  const files = walkProjectSourceFiles(absoluteRoot);
+  projectSourceFilesCache.set(absoluteRoot, files);
+  return files;
+}
+
+/** True when an MDX file namespace-imports one of `importPaths`. */
+export function fileHasMdxNamespaceImportFrom(
+  filePath: string,
+  importPaths: Set<string>,
+): boolean {
+  if (!MDX_FILE_PATTERN.test(filePath)) return false;
+  let source: string;
+  try {
+    source = fs.readFileSync(filePath, "utf8");
+  } catch {
+    return false;
+  }
+  for (const match of source.matchAll(NAMESPACE_IMPORT_RE)) {
+    const importPath = match[1];
+    if (importPath && importPaths.has(importPath)) return true;
+  }
+  return false;
 }
 
 function fileExists(filePath: string): boolean {
@@ -166,9 +466,7 @@ export function isPackageEntrypoint(filename: string): boolean {
   if (!parsed || typeof parsed !== "object") return false;
 
   const packageDir = path.dirname(packageJsonPath);
-  const relativeFilename = path
-    .relative(packageDir, filename)
-    .replace(/\\/g, "/");
+  const relativeFilename = relativePathFromDir(packageDir, filename);
   if (!relativeFilename || relativeFilename.startsWith("../")) return false;
 
   const manifest = parsed as {

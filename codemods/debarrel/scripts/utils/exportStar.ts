@@ -3,7 +3,17 @@ import path from "path";
 import { parse, type SgNode, type SgRoot } from "codemod:ast-grep";
 import type { Language } from "./language.ts";
 import { getStringContent } from "./ast.ts";
-import { isLocalRelativePath, resolveImportPath } from "./paths.ts";
+import { parseBarrelExport } from "./barrel.ts";
+import {
+  fileHasMdxNamespaceImportFrom,
+  findWorkspaceSourceRoot,
+  getAliasImportPathsForBarrel,
+  isLocalRelativePath,
+  normalizeAbsolutePath,
+  resolveImportPath,
+  resolveModuleImportPath,
+  getProjectSourceFiles,
+} from "./paths.ts";
 
 // The semantic analyzer's `definition()` does not chase through bare
 // `export * from "./y"` re-exports in this jssg runtime — for those
@@ -136,6 +146,101 @@ export function findSymbolViaExportStar(
   name: string,
 ): string | null {
   return walk(barrelFile, name, new Set(), 0);
+}
+
+export interface BarrelReexportMatch {
+  targetFile: string;
+  localName: string;
+  importType: "default" | "named";
+}
+
+/**
+ * Walk `barrelFile`'s explicit `export { … } from "./y"` re-exports to find
+ * which file provides `name` for a consumer import. Used when the semantic
+ * analyzer can't resolve the binding (e.g. default imports through
+ * `export { Foo as default }` re-exports).
+ */
+export function findSymbolViaBarrelReexports(
+  barrelFile: string,
+  consumerName: string,
+  isDefaultImport: boolean,
+): BarrelReexportMatch | null {
+  const root = parseFile(barrelFile);
+  if (!root) return null;
+
+  for (const stmt of root.root().children()) {
+    if (!stmt.is("export_statement")) continue;
+    // Namespace re-exports (`export * as Ns from "./y"`) are not debarreled here.
+    if (stmt.children().some((c) => c.is("namespace_export"))) continue;
+    const info = parseBarrelExport(stmt, consumerName, { isDefaultImport });
+    if (!info || info.importType === "namespace") continue;
+    const targetFile = resolveImportPath(barrelFile, info.sourceFromBarrel);
+    if (!targetFile) continue;
+    return {
+      targetFile,
+      localName: info.localName,
+      importType: info.importType,
+    };
+  }
+  return null;
+}
+
+function barrelDirectory(filePath: string): string | null {
+  const base = path.basename(filePath);
+  if (!/^index(\.barrel\.bak)?\.(ts|tsx|js|jsx)$/.test(base)) return null;
+  return path.resolve(path.dirname(filePath));
+}
+
+function barrelPathsMatch(left: string, right: string): boolean {
+  const leftDir = barrelDirectory(left);
+  const rightDir = barrelDirectory(right);
+  if (leftDir && rightDir) return leftDir === rightDir;
+  return path.resolve(left) === path.resolve(right);
+}
+
+/**
+ * True when any source file in the workspace namespace-imports `barrelFile`.
+ * Namespace imports cannot be debarreled to a single module, so the barrel must
+ * be kept when this returns true.
+ */
+export function barrelHasNamespaceImporters(barrelFile: string): boolean {
+  const workspaceRoot = findWorkspaceSourceRoot(barrelFile);
+  const normalizedBarrel = normalizeAbsolutePath(barrelFile, workspaceRoot);
+  const aliasImportPaths = new Set(getAliasImportPathsForBarrel(barrelFile));
+
+  for (const file of getProjectSourceFiles(workspaceRoot)) {
+    if (path.resolve(file) === path.resolve(normalizedBarrel)) continue;
+
+    if (fileHasMdxNamespaceImportFrom(file, aliasImportPaths)) {
+      return true;
+    }
+
+    const root = parseFile(file);
+    if (!root) continue;
+
+    for (const importStmt of root.root().findAll({
+      rule: { kind: "import_statement" },
+    })) {
+      const importClause = importStmt
+        .children()
+        .find((c) => c.is("import_clause"));
+      if (!importClause?.find({ rule: { kind: "namespace_import" } })) continue;
+
+      const sourceNode = importStmt.children().find((c) => c.is("string"));
+      const importPath = sourceNode ? getStringContent(sourceNode) : null;
+      if (!importPath) continue;
+
+      if (aliasImportPaths.has(importPath)) {
+        return true;
+      }
+
+      const resolved = resolveModuleImportPath(file, importPath);
+      if (resolved && barrelPathsMatch(resolved, normalizedBarrel)) {
+        return true;
+      }
+    }
+  }
+  return false;
 }
 
 function walk(

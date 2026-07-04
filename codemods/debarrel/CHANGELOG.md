@@ -1,5 +1,66 @@
 # debarrel
 
+## 0.7.11
+
+### Patch Changes
+
+- Parse JSONC `tsconfig.json` files (comments and trailing commas) so tsconfig path aliases resolve on real-world configs.
+- Route semantic-analyzer-resolved rewrites through `buildRewriteFromTarget` so default imports and barrel metrics stay correct.
+- Distinguish `export { default } from "./x"` from `export { Foo as default }` when choosing import type.
+- Cache workspace source file listings during namespace-importer detection.
+- Use `path.relative` instead of a hand-rolled relative path helper.
+
+## 0.7.10
+
+### Patch Changes
+
+- Commit barrel renames when a barrel file has no import edits (fixes `.tsx` barrels being skipped when `edits` is empty).
+- Add Sentry-shaped test fixtures for `sentry/stories` and `sentry/icons` namespace barrel preservation.
+
+## 0.7.9
+
+### Patch Changes
+
+- Preserve namespace-imported barrels when tsconfig aliases share the package name (e.g. `sentry/stories` with `sentry/*` paths) by inverse-mapping alias strings and matching import paths directly.
+- Scan `.mdx` files for namespace imports when deciding whether to keep a barrel.
+- Resolve tsconfig and workspace roots with absolute paths during namespace-importer detection.
+
+## 0.7.8
+
+### Patch Changes
+
+- Resolve barrel symbols using the imported name (`Foo` in `import { Foo as Bar }`), not the local alias, so folder barrels and wildcard aliases debarrel correctly.
+- Replace `path.relative` with portable helpers for the JSSG runtime when computing paths from a barrel directory to its exports.
+- Normalize barrel paths when detecting namespace importers so barrels are preserved reliably.
+
+## 0.7.7
+
+### Patch Changes
+
+- Fix double `type` keyword in rewritten `import type { … }` statements when specifiers use inline `type` qualifiers.
+- Resolve imports against `index.barrel.bak.*` when a barrel has already been renamed in the same pass, so consumers processed later still rewrite correctly.
+- Match namespace-importer barrels by directory path, not only exact barrel file path.
+- Rewrite relative folder imports (e.g. `../textarea`) to the concrete module when the directory barrel is removed.
+
+## 0.7.6
+
+### Patch Changes
+
+- Fix invalid `import type { type Foo }` output when rewriting top-level `import type` statements. Inline `type` qualifiers are now only emitted for mixed value/type imports split across paths.
+- Preserve barrel files that are namespace-imported (`import * as Ns from "…"`), since those imports cannot be debarreled to a single module.
+
+## 0.7.5
+
+### Patch Changes
+
+- Rewrite default imports that flow through `export { Foo as default }` barrel re-exports when the semantic analyzer cannot resolve the binding. Also walk explicit `export { … } from` re-exports before falling back to `export *` chains, and preserve inline `import { type Foo }` specifiers when splitting partial barrel imports.
+
+## 0.7.4
+
+### Patch Changes
+
+- Fix debarreling of tsconfig/webpack subpath aliases whose prefix matches the workspace `package.json` name (e.g. `myapp/widgets` when the package is named `myapp`). Previously the package-boundary guard treated every such import as a root package import and skipped rewriting, leaving consumers pointing at deleted barrel files. Also resolve alias imports when walking `export *` barrels and when semantic analysis resolves through a barrel to the source file.
+
 ## 0.7.3
 
 ### Patch Changes

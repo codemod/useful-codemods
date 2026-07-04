@@ -12,10 +12,17 @@ export interface BarrelExportInfo {
 /**
  * Parse a barrel file's export_statement to extract the re-export source and local name.
  */
+export interface ParseBarrelExportOptions {
+  /** True when the consumer uses `import Binding from "…"` syntax. */
+  isDefaultImport?: boolean;
+}
+
 export function parseBarrelExport(
   exportStmt: SgNode<Language>,
   consumerImportName: string,
+  options: ParseBarrelExportOptions = {},
 ): BarrelExportInfo | null {
+  const { isDefaultImport = false } = options;
   const children = exportStmt.children();
   const sourceNode = children.find((c) => c.is("string"));
   const exportClause = children.find((c) => c.is("export_clause"));
@@ -48,6 +55,15 @@ export function parseBarrelExport(
         return {
           sourceFromBarrel: sourcePath,
           localName: localName ?? consumerImportName,
+          importType: localName === "default" ? "default" : "named",
+        };
+      }
+      if (isDefaultImport && exportedName === "default") {
+        return {
+          sourceFromBarrel: sourcePath,
+          localName: localName ?? consumerImportName,
+          // `export { default } from "./x"` re-exports a default binding;
+          // `export { Foo as default }` exposes a named symbol as default.
           importType: localName === "default" ? "default" : "named",
         };
       }
