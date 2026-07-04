@@ -410,6 +410,18 @@ export function walkProjectSourceFiles(
   return files;
 }
 
+const projectSourceFilesCache = new Map<string, string[]>();
+
+/** Cached wrapper around {@link walkProjectSourceFiles} for a codemod run. */
+export function getProjectSourceFiles(rootDir: string): string[] {
+  const absoluteRoot = path.resolve(rootDir);
+  const cached = projectSourceFilesCache.get(absoluteRoot);
+  if (cached) return cached;
+  const files = walkProjectSourceFiles(absoluteRoot);
+  projectSourceFilesCache.set(absoluteRoot, files);
+  return files;
+}
+
 /** True when an MDX file namespace-imports one of `importPaths`. */
 export function fileHasMdxNamespaceImportFrom(
   filePath: string,

@@ -12,7 +12,7 @@ import {
   normalizeAbsolutePath,
   resolveImportPath,
   resolveModuleImportPath,
-  walkProjectSourceFiles,
+  getProjectSourceFiles,
 } from "./paths.ts";
 
 // The semantic analyzer's `definition()` does not chase through bare
@@ -208,7 +208,7 @@ export function barrelHasNamespaceImporters(barrelFile: string): boolean {
   const normalizedBarrel = normalizeAbsolutePath(barrelFile, workspaceRoot);
   const aliasImportPaths = new Set(getAliasImportPathsForBarrel(barrelFile));
 
-  for (const file of walkProjectSourceFiles(workspaceRoot)) {
+  for (const file of getProjectSourceFiles(workspaceRoot)) {
     if (path.resolve(file) === path.resolve(normalizedBarrel)) continue;
 
     if (fileHasMdxNamespaceImportFrom(file, aliasImportPaths)) {
