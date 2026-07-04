@@ -182,8 +182,63 @@ export function findNearestTsconfig(filename: string): string | null {
   }
 }
 
+/** Strip line and block comments so JSONC tsconfig files parse. */
+function stripJsonComments(text: string): string {
+  let result = "";
+  let i = 0;
+  while (i < text.length) {
+    const ch = text[i]!;
+    if (ch === '"') {
+      result += ch;
+      i++;
+      while (i < text.length) {
+        const inner = text[i]!;
+        result += inner;
+        if (inner === "\\") {
+          i++;
+          if (i < text.length) result += text[i]!;
+        } else if (inner === '"') {
+          break;
+        }
+        i++;
+      }
+      i++;
+      continue;
+    }
+    if (text.startsWith("//", i)) {
+      const newline = text.indexOf("\n", i);
+      if (newline === -1) break;
+      result += "\n";
+      i = newline + 1;
+      continue;
+    }
+    if (text.startsWith("/*", i)) {
+      const end = text.indexOf("*/", i + 2);
+      i = end === -1 ? text.length : end + 2;
+      continue;
+    }
+    result += ch;
+    i++;
+  }
+  return result;
+}
+
+function stripTrailingCommas(text: string): string {
+  return text.replace(/,(\s*[}\]])/g, "$1");
+}
+
+function readTsconfigJson(filePath: string): unknown | null {
+  try {
+    const raw = fs.readFileSync(filePath, "utf8");
+    const stripped = stripTrailingCommas(stripJsonComments(raw));
+    return JSON.parse(stripped);
+  } catch {
+    return null;
+  }
+}
+
 function loadTsconfigPaths(tsconfigPath: string): TsconfigPaths | null {
-  const parsed = readJsonFile(tsconfigPath);
+  const parsed = readTsconfigJson(tsconfigPath);
   if (!parsed || typeof parsed !== "object") return null;
   const compilerOptions = (parsed as { compilerOptions?: unknown })
     .compilerOptions;
