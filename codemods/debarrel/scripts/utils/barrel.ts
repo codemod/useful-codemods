@@ -62,7 +62,9 @@ export function parseBarrelExport(
         return {
           sourceFromBarrel: sourcePath,
           localName: localName ?? consumerImportName,
-          importType: "named",
+          // `export { default } from "./x"` re-exports a default binding;
+          // `export { Foo as default }` exposes a named symbol as default.
+          importType: localName === "default" ? "default" : "named",
         };
       }
     }

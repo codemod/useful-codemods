@@ -143,19 +143,25 @@ export function resolveSpecifier(
     isBarrelFile(barrelFile) &&
     resolvedFilename !== barrelFile
   ) {
-    const barrelDir = path.dirname(barrelFile);
-    let rel = relativePathFromDir(barrelDir, resolvedFilename);
-    const ext = path.extname(rel);
-    if (ext) rel = rel.slice(0, -ext.length);
-    rel = rel.replace(/\/index$/, "") || ".";
-    const fromBarrel = rel.startsWith(".") ? rel : `./${rel}`;
-    return {
+    const reexport = findSymbolViaBarrelReexports(
+      barrelFile,
+      importedName,
+      isDefaultImport,
+    );
+    const localName = reexport?.localName ?? importedName;
+    const importType =
+      reexport?.importType ?? (isDefaultImport ? "default" : "named");
+
+    return buildRewriteFromTarget(
       consumerName,
-      newImportPath: joinImportPaths(importPath, fromBarrel),
-      localName: importedName,
-      importType: "named",
-      resolvedFilePath: def.root.relativeFilename(),
-    };
+      importPath,
+      barrelFile,
+      resolvedFilename,
+      importerFilename,
+      importerRelativeFilename,
+      localName,
+      importType,
+    );
   }
 
   return null;
