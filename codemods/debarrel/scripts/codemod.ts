@@ -9,8 +9,15 @@ import {
   isInsideNodeModules,
   isNextPagesApiRoute,
   isPackageEntrypoint,
+  joinImportPaths,
+  relativePathFromDir,
+  resolveModuleImportPath,
+  shouldPreservePackageExportBoundary,
 } from "./utils/paths.ts";
-import { barrelHasNamespaceImporters } from "./utils/exportStar.ts";
+import {
+  barrelMustBePreserved,
+  findSymbolViaBarrelReexports,
+} from "./utils/exportStar.ts";
 import { isPureBarrel } from "./utils/barrel.ts";
 import { resolveSpecifier, type SpecRewrite } from "./utils/specifiers.ts";
 import { buildImportText, groupByPath } from "./utils/imports.ts";
@@ -21,6 +28,12 @@ import {
 } from "./utils/mocks.ts";
 
 const barrelImport = useMetricAtom("barrel_import");
+
+interface ExportSpecRewrite {
+  /** Original export_specifier text, e.g. `Checkbox` or `Option as PublicOptionType`. */
+  specText: string;
+  newExportPath: string;
+}
 
 const codemod: Codemod<Language> = async (root, options) => {
   const rootNode = root.root();
@@ -171,11 +184,112 @@ const codemod: Codemod<Language> = async (root, options) => {
     }
   }
 
+  // Rewrite re-export edges (`export { X } from "…"`) when the source is a
+  // barrel that can be deepened — mirrors import rewriting for parent barrels.
+  for (const exportStmt of rootNode.findAll({
+    rule: { kind: "export_statement" },
+  })) {
+    const children = exportStmt.children();
+    if (children.some((c) => c.is("namespace_export"))) continue;
+
+    const exportClause = children.find((c) => c.is("export_clause"));
+    const sourceNode = children.find((c) => c.is("string"));
+    if (!exportClause || !sourceNode) continue;
+
+    const exportPath = getStringContent(sourceNode);
+    if (!exportPath) continue;
+    const quoteChar = sourceNode.text().startsWith('"') ? '"' : "'";
+    const isTypeOnlyExport = children.some((c) => c.is("type"));
+
+    const barrelFile = resolveModuleImportPath(filename, exportPath);
+    if (!barrelFile || !isBarrelFile(barrelFile)) continue;
+
+    const specs = exportClause.findAll({ rule: { kind: "export_specifier" } });
+    if (specs.length === 0) continue;
+
+    const rewrites: ExportSpecRewrite[] = [];
+    for (const spec of specs) {
+      const identifiers = spec.findAll({ rule: { kind: "identifier" } });
+      if (identifiers.length === 0) continue;
+      // `X` → local X in source; `X as Y` → local X, exported Y.
+      const localInSource = identifiers[0]!.text();
+      const isDefault =
+        localInSource === "default" ||
+        (identifiers.length >= 2 && identifiers[1]!.text() === "default");
+
+      const match = findSymbolViaBarrelReexports(
+        barrelFile,
+        localInSource,
+        isDefault,
+      );
+      if (!match) continue;
+
+      const barrelDir = path.dirname(barrelFile);
+      let rel = relativePathFromDir(barrelDir, match.targetFile);
+      const ext = path.extname(rel);
+      if (ext) rel = rel.slice(0, -ext.length);
+      rel = rel.replace(/\/index$/, "") || ".";
+      const fromBarrel = rel.startsWith(".") ? rel : `./${rel}`;
+      const newExportPath = joinImportPaths(exportPath, fromBarrel);
+      if (newExportPath === exportPath) continue;
+
+      if (
+        shouldPreservePackageExportBoundary(
+          barrelFile,
+          exportPath,
+          newExportPath,
+        )
+      ) {
+        continue;
+      }
+
+      rewrites.push({
+        specText: spec.text(),
+        newExportPath,
+      });
+    }
+
+    if (rewrites.length === 0) continue;
+
+    const rewrittenTexts = new Set(rewrites.map((rw) => rw.specText));
+    const byPath = new Map<string, string[]>();
+    for (const rw of rewrites) {
+      const existing = byPath.get(rw.newExportPath) ?? [];
+      existing.push(rw.specText);
+      byPath.set(rw.newExportPath, existing);
+    }
+
+    const typeKeyword = isTypeOnlyExport ? "type " : "";
+    const lines: string[] = [];
+
+    if (rewrites.length < specs.length) {
+      const remaining: string[] = [];
+      for (const spec of specs) {
+        if (!rewrittenTexts.has(spec.text())) remaining.push(spec.text());
+      }
+      if (remaining.length > 0) {
+        lines.push(
+          `export ${typeKeyword}{ ${remaining.join(", ")} } from ${quoteChar}${exportPath}${quoteChar};`,
+        );
+      }
+    }
+
+    for (const [sourcePath, specTexts] of byPath) {
+      lines.push(
+        `export ${typeKeyword}{ ${specTexts.join(", ")} } from ${quoteChar}${sourcePath}${quoteChar};`,
+      );
+    }
+
+    edits.push(exportStmt.replace(lines.join("\n")));
+  }
+
   rewriteMockCalls(rootNode, barrelRewrites, edits);
 
   // Barrel rename — skip files inside node_modules or inside a package
   // when the barrel is an actual package entrypoint (renaming it would break
-  // consumers importing via the package name).
+  // consumers importing via the package name). Also preserve barrels that
+  // are still required by namespace imports, namespace re-exports, or
+  // dynamic `import()` consumers.
   let barrelRenamed = false;
   if (
     isBarrelFile(filename) &&
@@ -184,11 +298,7 @@ const codemod: Codemod<Language> = async (root, options) => {
     (!hasPackageJson(filename) || !isPackageEntrypoint(filename))
   ) {
     const { pure, hasWildcards } = isPureBarrel(rootNode);
-    if (
-      pure &&
-      !hasWildcards &&
-      !barrelHasNamespaceImporters(filename)
-    ) {
+    if (pure && !hasWildcards && !barrelMustBePreserved(filename)) {
       root.rename(`index.barrel.bak${path.extname(filename)}`);
       barrelRenamed = true;
     }

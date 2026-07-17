@@ -10,8 +10,8 @@ import {
   joinImportPaths,
   relativePathFromDir,
   resolveModuleImportPath,
+  shouldPreservePackageExportBoundary,
 } from "./paths.ts";
-import { parseBarrelExport } from "./barrel.ts";
 import { findSymbolViaBarrelReexports, findSymbolViaExportStar } from "./exportStar.ts";
 
 function getImportPackageName(importPath: string): string | null {
@@ -83,7 +83,8 @@ export function resolveSpecifier(
   // For non-relative imports, only preserve the package boundary for root
   // package imports (e.g. `myapp`, `@acme/ui`). Subpath imports like
   // `myapp/widgets` are often tsconfig/webpack aliases that share the
-  // package.json name and must still be debarreled.
+  // package.json name and must still be debarreled — unless they are
+  // already a public `"exports"` entry (handled in maybeRewrite).
   if (!isLocalRelativePath(importPath)) {
     const packageName = getPackageName(def.root.filename());
     const importPackage = getImportPackageName(importPath);
@@ -97,19 +98,25 @@ export function resolveSpecifier(
   }
 
   if (isBarrelFile(def.root.filename())) {
-    // Definition landed on an export_statement in the barrel
+    // Definition landed on an export_statement in the barrel — walk the full
+    // named re-export chain so one pass reaches the leaf module.
     if (def.node.is("export_statement")) {
-      const info = parseBarrelExport(def.node, importedName, {
+      const reexport = findSymbolViaBarrelReexports(
+        def.root.filename(),
+        importedName,
         isDefaultImport,
-      });
-      if (!info) return null;
-      return {
+      );
+      if (!reexport) return null;
+      return buildRewriteFromTarget(
         consumerName,
-        newImportPath: joinImportPaths(importPath, info.sourceFromBarrel),
-        localName: info.localName,
-        importType: info.importType,
-        resolvedFilePath: def.root.relativeFilename(),
-      };
+        importPath,
+        def.root.filename(),
+        reexport.targetFile,
+        importerFilename,
+        importerRelativeFilename,
+        reexport.localName,
+        reexport.importType,
+      );
     }
     // Import-then-reexport: definition landed on import_specifier in the barrel
     const barrelImportStmt = def.node.is("import_statement")
@@ -125,13 +132,17 @@ export function resolveSpecifier(
       const idents = def.node.findAll({ rule: { kind: "identifier" } });
       if (idents.length >= 1) originalName = idents[0]?.text() ?? importedName;
     }
-    return {
-      consumerName,
-      newImportPath: joinImportPaths(importPath, impPath),
-      localName: originalName,
-      importType: "named",
-      resolvedFilePath: def.root.relativeFilename(),
-    };
+    return maybeRewrite(
+      {
+        consumerName,
+        newImportPath: joinImportPaths(importPath, impPath),
+        localName: originalName,
+        importType: "named",
+        resolvedFilePath: def.root.relativeFilename(),
+      },
+      importPath,
+      def.root.filename(),
+    );
   }
 
   // Semantic analyzer resolved through the barrel to the actual source file.
@@ -225,7 +236,7 @@ function buildRewriteFromTarget(
   importerRelativeFilename: string,
   localName: string,
   importType: "default" | "named",
-): SpecRewrite {
+): SpecRewrite | null {
   const barrelDir = path.dirname(barrelFile);
   let rel = relativePathFromDir(barrelDir, targetFile);
   const ext = path.extname(rel);
@@ -239,13 +250,38 @@ function buildRewriteFromTarget(
     barrelFile,
   );
 
-  return {
-    consumerName,
-    newImportPath: joinImportPaths(importPath, fromBarrel),
-    localName,
-    importType,
-    resolvedFilePath: barrelRelativeFilename,
-  };
+  return maybeRewrite(
+    {
+      consumerName,
+      newImportPath: joinImportPaths(importPath, fromBarrel),
+      localName,
+      importType,
+      resolvedFilePath: barrelRelativeFilename,
+    },
+    importPath,
+    barrelFile,
+  );
+}
+
+/**
+ * Drop a candidate rewrite when it would deepen a public package
+ * `"exports"` subpath into a non-exported deep path.
+ */
+function maybeRewrite(
+  rewrite: SpecRewrite,
+  originalImportPath: string,
+  resolvedFilename: string,
+): SpecRewrite | null {
+  if (
+    shouldPreservePackageExportBoundary(
+      resolvedFilename,
+      originalImportPath,
+      rewrite.newImportPath,
+    )
+  ) {
+    return null;
+  }
+  return rewrite;
 }
 
 /**

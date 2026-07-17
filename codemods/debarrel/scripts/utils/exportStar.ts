@@ -8,6 +8,7 @@ import {
   fileHasMdxNamespaceImportFrom,
   findWorkspaceSourceRoot,
   getAliasImportPathsForBarrel,
+  isBarrelFile,
   isLocalRelativePath,
   normalizeAbsolutePath,
   resolveImportPath,
@@ -156,15 +157,35 @@ export interface BarrelReexportMatch {
 
 /**
  * Walk `barrelFile`'s explicit `export { … } from "./y"` re-exports to find
- * which file provides `name` for a consumer import. Used when the semantic
- * analyzer can't resolve the binding (e.g. default imports through
- * `export { Foo as default }` re-exports).
+ * which file provides `name` for a consumer import. Follows transitive named
+ * re-export chains (barrel → barrel → source) in a single pass.
  */
 export function findSymbolViaBarrelReexports(
   barrelFile: string,
   consumerName: string,
   isDefaultImport: boolean,
 ): BarrelReexportMatch | null {
+  return findSymbolViaBarrelReexportsRecursive(
+    barrelFile,
+    consumerName,
+    isDefaultImport,
+    new Set(),
+    0,
+  );
+}
+
+function findSymbolViaBarrelReexportsRecursive(
+  barrelFile: string,
+  consumerName: string,
+  isDefaultImport: boolean,
+  visited: Set<string>,
+  depth: number,
+): BarrelReexportMatch | null {
+  if (depth > 10) return null;
+  const normalized = path.resolve(barrelFile);
+  if (visited.has(normalized)) return null;
+  visited.add(normalized);
+
   const root = parseFile(barrelFile);
   if (!root) return null;
 
@@ -176,6 +197,19 @@ export function findSymbolViaBarrelReexports(
     if (!info || info.importType === "namespace") continue;
     const targetFile = resolveImportPath(barrelFile, info.sourceFromBarrel);
     if (!targetFile) continue;
+
+    // Continue through nested barrels so one pass reaches the leaf module.
+    if (isBarrelFile(targetFile) && targetFile !== barrelFile) {
+      const nested = findSymbolViaBarrelReexportsRecursive(
+        targetFile,
+        info.localName,
+        info.importType === "default",
+        visited,
+        depth + 1,
+      );
+      if (nested) return nested;
+    }
+
     return {
       targetFile,
       localName: info.localName,
@@ -198,12 +232,35 @@ function barrelPathsMatch(left: string, right: string): boolean {
   return path.resolve(left) === path.resolve(right);
 }
 
+function importPathResolvesToBarrel(
+  importerFile: string,
+  importPath: string,
+  normalizedBarrel: string,
+  aliasImportPaths: Set<string>,
+): boolean {
+  if (aliasImportPaths.has(importPath)) return true;
+  const resolved = resolveModuleImportPath(importerFile, importPath);
+  return Boolean(resolved && barrelPathsMatch(resolved, normalizedBarrel));
+}
+
 /**
- * True when any source file in the workspace namespace-imports `barrelFile`.
- * Namespace imports cannot be debarreled to a single module, so the barrel must
- * be kept when this returns true.
+ * True when any source file in the workspace depends on `barrelFile` in a
+ * way that cannot be rewritten to a single direct module:
+ * - namespace imports (`import * as X from "..."`)
+ * - namespace re-exports (`export * as X from "..."`)
+ * - dynamic imports (`import("...")`)
+ *
+ * Those consumers require the barrel entrypoint to remain in place.
  */
 export function barrelHasNamespaceImporters(barrelFile: string): boolean {
+  return barrelMustBePreserved(barrelFile);
+}
+
+/**
+ * Broader rename-safety check covering namespace imports, namespace
+ * re-exports, and dynamic `import()` consumers.
+ */
+export function barrelMustBePreserved(barrelFile: string): boolean {
   const workspaceRoot = findWorkspaceSourceRoot(barrelFile);
   const normalizedBarrel = normalizeAbsolutePath(barrelFile, workspaceRoot);
   const aliasImportPaths = new Set(getAliasImportPathsForBarrel(barrelFile));
@@ -230,12 +287,60 @@ export function barrelHasNamespaceImporters(barrelFile: string): boolean {
       const importPath = sourceNode ? getStringContent(sourceNode) : null;
       if (!importPath) continue;
 
-      if (aliasImportPaths.has(importPath)) {
+      if (
+        importPathResolvesToBarrel(
+          file,
+          importPath,
+          normalizedBarrel,
+          aliasImportPaths,
+        )
+      ) {
         return true;
       }
+    }
 
-      const resolved = resolveModuleImportPath(file, importPath);
-      if (resolved && barrelPathsMatch(resolved, normalizedBarrel)) {
+    for (const exportStmt of root.root().findAll({
+      rule: { kind: "export_statement" },
+    })) {
+      if (!exportStmt.children().some((c) => c.is("namespace_export"))) {
+        continue;
+      }
+      const sourceNode = exportStmt.children().find((c) => c.is("string"));
+      const exportPath = sourceNode ? getStringContent(sourceNode) : null;
+      if (!exportPath) continue;
+
+      if (
+        importPathResolvesToBarrel(
+          file,
+          exportPath,
+          normalizedBarrel,
+          aliasImportPaths,
+        )
+      ) {
+        return true;
+      }
+    }
+
+    // Dynamic import("./barrel") / import('...') — string argument only.
+    for (const call of root.root().findAll({
+      rule: { kind: "call_expression" },
+    })) {
+      const callee = call.children().find((c) => c.is("import"));
+      if (!callee) continue;
+      const args = call.children().find((c) => c.is("arguments"));
+      if (!args) continue;
+      const sourceNode = args.children().find((c) => c.is("string"));
+      const importPath = sourceNode ? getStringContent(sourceNode) : null;
+      if (!importPath) continue;
+
+      if (
+        importPathResolvesToBarrel(
+          file,
+          importPath,
+          normalizedBarrel,
+          aliasImportPaths,
+        )
+      ) {
         return true;
       }
     }
@@ -266,8 +371,8 @@ function walk(
 
     // The first re-export hop didn't declare the symbol directly — keep
     // walking that file's own `export *` chain. We don't try to follow
-    // named `export { X } from "./y"` re-exports here; those are
-    // single-hop by design, mirroring the existing named-reexport branch.
+    // named `export { X } from "./y"` re-exports here; those are handled
+    // by findSymbolViaBarrelReexports.
     const nested = walk(targetFile, name, visited, depth + 1);
     if (nested) return nested;
   }

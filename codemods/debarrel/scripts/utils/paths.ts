@@ -434,6 +434,80 @@ function collectExportTargets(value: unknown, targets: string[]): void {
   }
 }
 
+/**
+ * Top-level keys of a package.json `"exports"` map (e.g. `"."`,
+ * `"./components/button"`). Conditional export objects contribute their
+ * outer keys only — nested `"import"` / `"require"` conditions are ignored.
+ */
+function collectExportKeys(value: unknown): string[] {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return [];
+  return Object.keys(value).filter(
+    (key) => key === "." || key.startsWith("./"),
+  );
+}
+
+function getImportPackageName(importPath: string): string | null {
+  if (importPath.startsWith("@")) {
+    const segments = importPath.split("/");
+    return segments.length >= 2 ? `${segments[0]}/${segments[1]}` : null;
+  }
+  const [packageName] = importPath.split("/");
+  return packageName || null;
+}
+
+/**
+ * True when `importPath` matches an exact public `"exports"` key of the
+ * package that owns `resolvedFilename` (e.g. `@acme/ui/components/button`
+ * against `"./components/button"`).
+ *
+ * Returns false when the package has no `"exports"` map — those packages
+ * are treated as unrestricted (tsconfig aliases may still deepen).
+ */
+export function isPackageExportSubpath(
+  resolvedFilename: string,
+  importPath: string,
+): boolean {
+  if (isLocalRelativePath(importPath)) return false;
+
+  const packageJsonPath = findNearestPackageJson(resolvedFilename);
+  if (!packageJsonPath) return false;
+
+  const parsed = readJsonFile(packageJsonPath);
+  if (!parsed || typeof parsed !== "object") return false;
+
+  const manifest = parsed as { name?: unknown; exports?: unknown };
+  if (typeof manifest.name !== "string" || !manifest.name) return false;
+  if (manifest.exports === undefined) return false;
+
+  const importPackage = getImportPackageName(importPath);
+  if (importPackage !== manifest.name) return false;
+  if (!importPath.startsWith(manifest.name)) return false;
+
+  const rest = importPath.slice(manifest.name.length);
+  const exportKey = rest === "" ? "." : `.${rest}`;
+  return collectExportKeys(manifest.exports).includes(exportKey);
+}
+
+/**
+ * True when rewriting `originalImportPath` → `candidateImportPath` would
+ * leave a package `"exports"` surface for a deeper, non-exported path.
+ *
+ * Preserves already-valid export subpaths (e.g. `@acme/ui/components/button`)
+ * while still allowing tsconfig/webpack aliases that share a package name
+ * but are not listed in `"exports"`.
+ */
+export function shouldPreservePackageExportBoundary(
+  resolvedFilename: string,
+  originalImportPath: string,
+  candidateImportPath: string,
+): boolean {
+  if (isLocalRelativePath(originalImportPath)) return false;
+  if (!isPackageExportSubpath(resolvedFilename, originalImportPath)) {
+    return false;
+  }
+  return !isPackageExportSubpath(resolvedFilename, candidateImportPath);
+}
+
 export function findNearestPackageJson(filename: string): string | null {
   let dir = path.dirname(filename);
   const root = path.parse(dir).root || "/";
