@@ -12,7 +12,7 @@ import {
   resolveModuleImportPath,
   shouldPreservePackageExportBoundary,
 } from "./paths.ts";
-import { findSymbolViaBarrelReexports, findSymbolViaExportStar } from "./exportStar.ts";
+import { findSymbolViaBarrelReexports, findSymbolViaExportStar, moduleDeclaresNamedExport, moduleHasDefaultExport, moduleSoleNamedExport } from "./exportStar.ts";
 
 function getImportPackageName(importPath: string): string | null {
   if (importPath.startsWith("@")) {
@@ -251,16 +251,52 @@ function buildRewriteFromTarget(
   );
 
   return maybeRewrite(
-    {
-      consumerName,
-      newImportPath: joinImportPaths(importPath, fromBarrel),
-      localName,
-      importType,
-      resolvedFilePath: barrelRelativeFilename,
-    },
+    adjustRewriteForTargetExports(
+      {
+        consumerName,
+        newImportPath: joinImportPaths(importPath, fromBarrel),
+        localName,
+        importType,
+        resolvedFilePath: barrelRelativeFilename,
+      },
+      targetFile,
+    ),
     importPath,
     barrelFile,
   );
+}
+
+export function adjustRewriteForTargetExports(
+  rewrite: SpecRewrite,
+  targetFile: string,
+): SpecRewrite {
+  if (rewrite.importType === "default") return rewrite;
+  if (moduleDeclaresNamedExport(targetFile, rewrite.localName)) return rewrite;
+
+  if (moduleHasDefaultExport(targetFile)) {
+    return {
+      ...rewrite,
+      importType: "default",
+      localName: "default",
+    };
+  }
+
+  const soleNamedExport = moduleSoleNamedExport(targetFile);
+  if (soleNamedExport) {
+    return {
+      ...rewrite,
+      localName: soleNamedExport,
+    };
+  }
+
+  if (moduleDeclaresNamedExport(targetFile, rewrite.consumerName)) {
+    return {
+      ...rewrite,
+      localName: rewrite.consumerName,
+    };
+  }
+
+  return rewrite;
 }
 
 /**

@@ -19,10 +19,11 @@ import {
   findSymbolViaBarrelReexports,
 } from "./utils/exportStar.ts";
 import { isPureBarrel } from "./utils/barrel.ts";
-import { resolveSpecifier, type SpecRewrite } from "./utils/specifiers.ts";
+import { resolveSpecifier, adjustRewriteForTargetExports, type SpecRewrite } from "./utils/specifiers.ts";
 import { buildImportText, groupByPath } from "./utils/imports.ts";
 import {
   recordBarrelRewrites,
+  rewriteDynamicImports,
   rewriteMockCalls,
   type BarrelMockInfo,
 } from "./utils/mocks.ts";
@@ -100,6 +101,10 @@ const codemod: Codemod<Language> = async (root, options) => {
           if (!isTypeOnlyImport && isTypeOnlySpecifier(spec)) {
             rw.typeOnly = true;
           }
+          const targetFile = resolveModuleImportPath(filename, rw.newImportPath);
+          if (targetFile) {
+            Object.assign(rw, adjustRewriteForTargetExports(rw, targetFile));
+          }
           rewrites.push(rw);
         }
       }
@@ -125,7 +130,13 @@ const codemod: Codemod<Language> = async (root, options) => {
           relativeFilename,
           true,
         );
-        if (rw) rewrites.push(rw);
+        if (rw) {
+          const targetFile = resolveModuleImportPath(filename, rw.newImportPath);
+          if (targetFile) {
+            Object.assign(rw, adjustRewriteForTargetExports(rw, targetFile));
+          }
+          rewrites.push(rw);
+        }
       }
     }
 
@@ -243,8 +254,19 @@ const codemod: Codemod<Language> = async (root, options) => {
         continue;
       }
 
+      let specText = spec.text();
+      if (match.importType === "default") {
+        const identifiers = spec.findAll({ rule: { kind: "identifier" } });
+        const localInSpec = identifiers[0]?.text();
+        if (localInSpec && localInSpec !== "default") {
+          const exportedName =
+            identifiers[identifiers.length - 1]?.text() ?? localInSpec;
+          specText = `default as ${exportedName}`;
+        }
+      }
+
       rewrites.push({
-        specText: spec.text(),
+        specText,
         newExportPath,
       });
     }
@@ -284,6 +306,7 @@ const codemod: Codemod<Language> = async (root, options) => {
   }
 
   rewriteMockCalls(rootNode, barrelRewrites, edits);
+  rewriteDynamicImports(rootNode, barrelRewrites, edits);
 
   // Barrel rename — skip files inside node_modules or inside a package
   // when the barrel is an actual package entrypoint (renaming it would break

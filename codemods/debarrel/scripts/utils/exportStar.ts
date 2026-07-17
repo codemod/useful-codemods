@@ -174,6 +174,118 @@ export function findSymbolViaBarrelReexports(
   );
 }
 
+interface ImportBindingSource {
+  targetFile: string;
+  importedName: string;
+  importType: "default" | "named";
+}
+
+function findImportBindingSource(
+  barrelFile: string,
+  localBinding: string,
+): ImportBindingSource | null {
+  const root = parseFile(barrelFile);
+  if (!root) return null;
+
+  for (const importStmt of root.root().findAll({
+    rule: { kind: "import_statement" },
+  })) {
+    const sourceNode = importStmt.children().find((c) => c.is("string"));
+    const impPath = sourceNode ? getStringContent(sourceNode) : null;
+    if (!impPath || !isLocalRelativePath(impPath)) continue;
+
+    const importClause = importStmt
+      .children()
+      .find((c) => c.is("import_clause"));
+    if (!importClause) continue;
+
+    const defaultIdent = importClause
+      .children()
+      .find(
+        (c) =>
+          c.is("identifier") &&
+          !c.inside({ rule: { kind: "named_imports" } }),
+      );
+    if (defaultIdent?.text() === localBinding) {
+      const targetFile = resolveImportPath(barrelFile, impPath);
+      if (!targetFile) continue;
+      return {
+        targetFile,
+        importedName: "default",
+        importType: "default",
+      };
+    }
+
+    for (const spec of importClause.findAll({
+      rule: { kind: "import_specifier" },
+    })) {
+      const idents = spec.findAll({ rule: { kind: "identifier" } });
+      const imported = idents[0]?.text();
+      const local = idents[idents.length - 1]?.text();
+      if (!imported || local !== localBinding) continue;
+
+      const targetFile = resolveImportPath(barrelFile, impPath);
+      if (!targetFile) continue;
+      const isDefaultSpec = imported === "default";
+      return {
+        targetFile,
+        importedName: isDefaultSpec ? "default" : imported,
+        importType: isDefaultSpec ? "default" : "named",
+      };
+    }
+  }
+
+  return null;
+}
+
+function findSymbolViaLocalReexport(
+  barrelFile: string,
+  consumerName: string,
+  visited: Set<string>,
+  depth: number,
+): BarrelReexportMatch | null {
+  const root = parseFile(barrelFile);
+  if (!root) return null;
+
+  for (const stmt of root.root().children()) {
+    if (!stmt.is("export_statement")) continue;
+    const shape = inspectExportStatement(stmt);
+    if (!shape.exportClause || shape.sourceNode) continue;
+
+    for (const spec of shape.exportClause.findAll({
+      rule: { kind: "export_specifier" },
+    })) {
+      const idents = spec.findAll({ rule: { kind: "identifier" } });
+      const localName = idents[0]?.text();
+      const exportedName =
+        idents.length >= 2 ? idents[1]?.text() : localName;
+      if (!localName || exportedName !== consumerName) continue;
+
+      const binding = findImportBindingSource(barrelFile, localName);
+      if (!binding) continue;
+
+      if (isBarrelFile(binding.targetFile)) {
+        const nested = findSymbolViaBarrelReexportsRecursive(
+          binding.targetFile,
+          binding.importedName === "default" ? localName : binding.importedName,
+          binding.importType === "default",
+          visited,
+          depth + 1,
+        );
+        if (nested) return nested;
+      }
+
+      return {
+        targetFile: binding.targetFile,
+        localName: binding.importedName,
+        importType: binding.importType,
+      };
+    }
+  }
+
+  return null;
+}
+
 function findSymbolViaBarrelReexportsRecursive(
   barrelFile: string,
   consumerName: string,
@@ -185,6 +297,14 @@ function findSymbolViaBarrelReexportsRecursive(
   const normalized = path.resolve(barrelFile);
   if (visited.has(normalized)) return null;
   visited.add(normalized);
+
+  const local = findSymbolViaLocalReexport(
+    barrelFile,
+    consumerName,
+    visited,
+    depth,
+  );
+  if (local) return local;
 
   const root = parseFile(barrelFile);
   if (!root) return null;
@@ -241,6 +361,47 @@ function importPathResolvesToBarrel(
   if (aliasImportPaths.has(importPath)) return true;
   const resolved = resolveModuleImportPath(importerFile, importPath);
   return Boolean(resolved && barrelPathsMatch(resolved, normalizedBarrel));
+}
+
+/**
+ * True when `root` contains a static (non-namespace) import whose source path
+ * resolves to `normalizedBarrel`. Such files get mock/dynamic-import paths
+ * rewritten in the same codemod pass, so they should not block barrel rename.
+ */
+function fileHasRewritableStaticBarrelImport(
+  root: SgRoot<Language>,
+  importerFile: string,
+  barrelImportPath: string,
+  normalizedBarrel: string,
+  aliasImportPaths: Set<string>,
+): boolean {
+  if (
+    !importPathResolvesToBarrel(
+      importerFile,
+      barrelImportPath,
+      normalizedBarrel,
+      aliasImportPaths,
+    )
+  ) {
+    return false;
+  }
+
+  for (const importStmt of root.root().findAll({
+    rule: { kind: "import_statement" },
+  })) {
+    const sourceNode = importStmt.children().find((c) => c.is("string"));
+    const importPath = sourceNode ? getStringContent(sourceNode) : null;
+    if (importPath !== barrelImportPath) continue;
+
+    const importClause = importStmt
+      .children()
+      .find((c) => c.is("import_clause"));
+    if (importClause?.find({ rule: { kind: "namespace_import" } })) continue;
+
+    return true;
+  }
+
+  return false;
 }
 
 /**
@@ -341,11 +502,105 @@ export function barrelMustBePreserved(barrelFile: string): boolean {
           aliasImportPaths,
         )
       ) {
+        if (
+          fileHasRewritableStaticBarrelImport(
+            root,
+            file,
+            importPath,
+            normalizedBarrel,
+            aliasImportPaths,
+          )
+        ) {
+          continue;
+        }
         return true;
       }
     }
   }
   return false;
+}
+
+export function moduleDeclaresNamedExport(
+  moduleFile: string,
+  name: string,
+): boolean {
+  const root = parseFile(moduleFile);
+  if (!root) return false;
+  return fileDeclaresName(root, name);
+}
+
+export function moduleHasDefaultExport(moduleFile: string): boolean {
+  const root = parseFile(moduleFile);
+  if (!root) return false;
+
+  for (const stmt of root.root().children()) {
+    if (!stmt.is("export_statement")) continue;
+    const children = stmt.children();
+    if (!children.some((c) => c.is("default"))) continue;
+
+    const shape = inspectExportStatement(stmt);
+    if (shape.exportClause) {
+      for (const spec of shape.exportClause.findAll({
+        rule: { kind: "export_specifier" },
+      })) {
+        const idents = spec.findAll({ rule: { kind: "identifier" } });
+        if (idents[0]?.text() === "default") return true;
+      }
+      continue;
+    }
+
+    if (shape.declaration) return true;
+  }
+  return false;
+}
+
+function collectExportedNames(root: SgRoot<Language>): string[] {
+  const names = new Set<string>();
+  for (const stmt of root.root().children()) {
+    if (!stmt.is("export_statement")) continue;
+    const shape = inspectExportStatement(stmt);
+
+    if (shape.exportClause) {
+      for (const spec of shape.exportClause.findAll({
+        rule: { kind: "export_specifier" },
+      })) {
+        const idents = spec.findAll({ rule: { kind: "identifier" } });
+        const exportedName = idents[idents.length - 1]?.text();
+        if (exportedName && exportedName !== "default") names.add(exportedName);
+      }
+      continue;
+    }
+
+    if (shape.declaration) {
+      if (shape.declaration.is("lexical_declaration")) {
+        for (const declarator of shape.declaration.findAll({
+          rule: { kind: "variable_declarator" },
+        })) {
+          const ident = declarator
+            .children()
+            .find(
+              (c) =>
+                c.is("identifier") ||
+                c.is("shorthand_property_identifier_pattern"),
+            );
+          if (ident) names.add(ident.text());
+        }
+      } else {
+        const ident = shape.declaration
+          .children()
+          .find((c) => c.is("identifier") || c.is("type_identifier"));
+        if (ident) names.add(ident.text());
+      }
+    }
+  }
+  return [...names];
+}
+
+export function moduleSoleNamedExport(moduleFile: string): string | null {
+  const root = parseFile(moduleFile);
+  if (!root) return null;
+  const names = collectExportedNames(root);
+  return names.length === 1 ? names[0]! : null;
 }
 
 function walk(
