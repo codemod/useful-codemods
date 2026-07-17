@@ -1,6 +1,6 @@
 packages:
   - "codemods/*"
 catalog:
-  "@jssg/utils": "^0.0.4"
-  "@codemod.com/jssg-types": "^1.6.0"
-  "typescript": "6.0.2"
+  "@jssg/utils": "^0.0.9"
+  "@codemod.com/jssg-types": "^1.6.2"
+  "typescript": "7.0.2"

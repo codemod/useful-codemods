@@ -1,0 +1,6 @@
+{
+  "name": "@acme/ui",
+  "exports": {
+    "./components/button": "./components/button/index.ts"
+  }
+}
