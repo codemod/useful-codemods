@@ -1,5 +1,11 @@
 # debarrel
 
+## 0.7.13
+
+### Patch Changes
+
+- 2ed134e: Fix cloud runtime crash in project file walking when `readdirSync` entries lack a usable `.name` (avoid `entry.name.startsWith` on undefined).
+
 ## 0.7.12
 
 ### Patch Changes
