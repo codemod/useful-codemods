@@ -337,26 +337,66 @@ const MDX_FILE_PATTERN = /\.mdx$/;
 const NAMESPACE_IMPORT_RE =
   /import\s+\*\s+as\s+[\w$]+\s+from\s+['"]([^'"]+)['"]/g;
 
-/** Recursively list source files under `rootDir`, skipping node_modules. */
+/** Resolve a `readdirSync` entry to a file name across Node and curated fs. */
+function readdirEntryName(entry: unknown): string | null {
+  if (typeof entry === "string") return entry;
+  if (
+    entry &&
+    typeof entry === "object" &&
+    "name" in entry &&
+    typeof (entry as { name: unknown }).name === "string"
+  ) {
+    return (entry as { name: string }).name;
+  }
+  return null;
+}
+
+function readdirEntryIsDirectory(entry: unknown, fullPath: string): boolean {
+  if (
+    entry &&
+    typeof entry === "object" &&
+    typeof (entry as fs.Dirent).isDirectory === "function"
+  ) {
+    try {
+      return (entry as fs.Dirent).isDirectory();
+    } catch {
+      // Fall through to stat.
+    }
+  }
+  try {
+    return fs.statSync(fullPath).isDirectory();
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Recursively list source files under `rootDir`, skipping node_modules.
+ *
+ * Uses plain `readdirSync` (string names) plus `statSync`. Cloud/LLRT curated
+ * fs has returned incomplete Dirents for `{ withFileTypes: true }`, which
+ * crashed on `entry.name.startsWith(...)`.
+ */
 export function walkProjectSourceFiles(
   rootDir: string,
   files: string[] = [],
 ): string[] {
   const absoluteRoot = path.resolve(rootDir);
-  let entries: fs.Dirent[];
+  let entries: unknown[];
   try {
-    entries = fs.readdirSync(absoluteRoot, { withFileTypes: true });
+    entries = fs.readdirSync(absoluteRoot);
   } catch {
     return files;
   }
   for (const entry of entries) {
-    if (entry.name === "node_modules" || entry.name.startsWith(".")) continue;
-    const fullPath = path.resolve(absoluteRoot, entry.name);
-    if (entry.isDirectory()) {
+    const name = readdirEntryName(entry);
+    if (!name || name === "node_modules" || name.startsWith(".")) continue;
+    const fullPath = path.resolve(absoluteRoot, name);
+    if (readdirEntryIsDirectory(entry, fullPath)) {
       walkProjectSourceFiles(fullPath, files);
     } else if (
-      SOURCE_FILE_PATTERN.test(entry.name) ||
-      MDX_FILE_PATTERN.test(entry.name)
+      SOURCE_FILE_PATTERN.test(name) ||
+      MDX_FILE_PATTERN.test(name)
     ) {
       files.push(fullPath);
     }
