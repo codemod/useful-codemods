@@ -1,0 +1,11 @@
+{
+  "barrel_import": [
+    {
+      "cardinality": {
+        "filePath": "src/cache/index.ts",
+        "importer": "src/consumer.ts"
+      },
+      "count": 1
+    }
+  ]
+}

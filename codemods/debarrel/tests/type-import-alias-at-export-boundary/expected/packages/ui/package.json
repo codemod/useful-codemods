@@ -1,0 +1,6 @@
+{
+  "name": "@acme/ui",
+  "exports": {
+    "./components/form": "./components/form/index.ts"
+  }
+}

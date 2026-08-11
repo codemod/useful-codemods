@@ -28,10 +28,16 @@ export function parseBarrelExport(
   const exportClause = children.find((c) => c.is("export_clause"));
   const namespaceExport = children.find((c) => c.is("namespace_export"));
 
-  // export * as X from './source'
+  // export * as X from './source' — only match when the consumer is
+  // importing the namespace binding itself (e.g. `import { api }`), not
+  // an unrelated sibling export in the same barrel.
   if (namespaceExport && sourceNode) {
     const sourcePath = getStringContent(sourceNode);
     if (!sourcePath || !isLocalRelativePath(sourcePath)) return null;
+    const nsIdent = namespaceExport
+      .findAll({ rule: { kind: "identifier" } })
+      .at(-1);
+    if (!nsIdent || nsIdent.text() !== consumerImportName) return null;
     return {
       sourceFromBarrel: sourcePath,
       localName: consumerImportName,
