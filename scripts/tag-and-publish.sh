@@ -5,7 +5,12 @@
 
 set -euo pipefail
 
+# actions/checkout does not fetch tags by default; load remote tags so we
+# skip versions that were already released instead of failing on push.
+git fetch --tags --force origin
+
 changed_dirs="[]"
+tags_to_push=()
 
 for pkg_json in codemods/*/package.json; do
   dir="$(dirname "$pkg_json")"
@@ -20,9 +25,14 @@ for pkg_json in codemods/*/package.json; do
 
   echo "Creating tag $tag"
   git tag "$tag"
+  tags_to_push+=("$tag")
   changed_dirs="$(echo "$changed_dirs" | node -p "JSON.stringify([...JSON.parse(require('fs').readFileSync('/dev/stdin','utf8')), \"$dir\"])")"
 done
 
-git push --tags
+if [ ${#tags_to_push[@]} -gt 0 ]; then
+  git push origin "${tags_to_push[@]}"
+else
+  echo "No new tags to push"
+fi
 
 echo "changed_dirs=$changed_dirs" >> "$GITHUB_OUTPUT"

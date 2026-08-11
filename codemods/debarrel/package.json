@@ -1,6 +1,6 @@
 {
   "name": "debarrel",
-  "version": "0.7.11",
+  "version": "0.7.12",
   "description": "Debarrel JS/TS codebases. Removing barrel files and replacing import statements.",
   "type": "module",
   "scripts": {
