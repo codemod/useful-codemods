@@ -21,6 +21,8 @@ jobs:
       changed_dirs: ${{ steps.tag.outputs.changed_dirs }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-tags: true
 
       - uses: pnpm/action-setup@v4
 

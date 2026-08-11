@@ -1,5 +1,11 @@
 # debarrel
 
+## 0.7.12
+
+### Patch Changes
+
+- Respect package.json exports boundaries and preserve non-static consumers; handle aliased re-exports, additional export shapes, and test mock updates.
+
 ## 0.7.11
 
 ### Patch Changes
