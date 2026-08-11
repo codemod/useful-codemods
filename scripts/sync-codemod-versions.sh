@@ -13,8 +13,17 @@ for pkg_json in codemods/*/package.json; do
   fi
 
   version="$(node -p "require('./$pkg_json').version")"
-  # Replace the version line in codemod.yaml
-  sed -i '' "s/^version: .*/version: \"$version\"/" "$codemod_yaml"
+  # Use Node instead of sed -i: BSD sed (macOS) and GNU sed (Linux CI) disagree
+  # on the in-place backup-extension syntax.
+  node --input-type=module -e "
+    import fs from 'node:fs';
+    const file = process.argv[1];
+    const version = process.argv[2];
+    const next = fs
+      .readFileSync(file, 'utf8')
+      .replace(/^version: .*$/m, \`version: \"\${version}\"\`);
+    fs.writeFileSync(file, next);
+  " "$codemod_yaml" "$version"
 
   echo "Synced $codemod_yaml to version $version"
 done
